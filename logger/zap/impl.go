@@ -8,19 +8,15 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-//zap的組成：
-//	core,		可用NewTee()來包裝多個core
-//		encoder,		*根據自己需求制定，提供幾個示例選擇
-//		writesyncer,	*封裝writer，比如lumber，可能要抽到外層，其他logger也要用
-//		levelEnable		*AtomicLevel	如果需要動態改變日志level，只能用這個
-//	option	*wrapcore		可能是很適合框架封裝的
-
-type option func(z *ZapLogger)
-
 type ZapLogger struct {
 	ops      []option
 	zops     []zap.Option
 	cores    []zapcore.Core
+	corePart struct {
+		enc    zapcore.Encoder
+		writer zapcore.WriteSyncer
+		lv     zapcore.Level
+	}
 	lg       *zap.Logger
 	su       *zap.SugaredLogger
 	useSugar bool
@@ -31,43 +27,20 @@ func (z *ZapLogger) build() {
 		op(z)
 	}
 
+	if z.corePart.enc != nil && z.corePart.writer != nil {
+		z.cores = append(z.cores, zapcore.NewCore(z.corePart.enc, z.corePart.writer, z.corePart.lv))
+	}
+
 	if len(z.cores) == 0 {
 		z.lg = zap.NewNop()
 		return
 	}
 	if len(z.cores) == 1 {
-		z.lg = zap.New(z.cores[0])
+		z.lg = zap.New(z.cores[0], z.zops...)
 	} else {
-		z.lg = zap.New(zapcore.NewTee(z.cores...))
+		z.lg = zap.New(zapcore.NewTee(z.cores...), z.zops...)
 	}
-	z.lg.WithOptions(z.zops...)
 	z.su = z.lg.Sugar()
-}
-
-func WithZapCore(cores ...zapcore.Core) option {
-	return func(z *ZapLogger) {
-		z.cores = append(z.cores, cores...)
-	}
-}
-
-func WithZapOption(zops ...zap.Option) option {
-	return func(z *ZapLogger) {
-		z.zops = append(z.zops, zops...)
-	}
-}
-
-func AddCaller(skip ...int) option {
-	ops := []zap.Option{zap.AddCaller()}
-	if len(skip) > 0 && skip[0] > 0 {
-		ops = append(ops, zap.AddCallerSkip(skip[0]))
-	}
-	return WithZapOption(ops...)
-}
-
-func UseSugar() option {
-	return func(z *ZapLogger) {
-		z.useSugar = true
-	}
 }
 
 func NewZapLogger(ops ...option) *ZapLogger {

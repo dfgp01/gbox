@@ -1,5 +1,7 @@
 package logger
 
+import "gbox/core"
+
 type (
 	Level uint32
 )
@@ -14,10 +16,18 @@ const (
 	Trace              //追蹤棧
 )
 
-type ILogger interface {
-	Info(msg string, kv ...interface{})
-	Infof(template string, args ...interface{})
-}
+type (
+	Logger interface {
+		Info(msg string, kv ...interface{})
+		Infof(template string, args ...interface{})
+	}
+
+	LoggerComponent interface {
+		core.Component
+		Info(msg string, kv ...interface{})
+		Infof(template string, args ...interface{})
+	}
+)
 
 type Config struct {
 	Level Level `json:"level"`
@@ -31,17 +41,4 @@ type File struct {
 	MaxBackups int    `json:"max_backups"` // 保留旧文件的最大数量
 	MaxAge     int    `json:"max_age"`     // 旧文件保留天数
 	Compress   bool   `json:"compress"`    // 是否压缩旧文件
-}
-
-var Logger ILogger
-
-// 暂时放这里
-func UseLogrus(cfg *Config) ILogger {
-	Logger = NewLogrus(cfg)
-	return Logger
-}
-
-func UseZap(cfg *Config) ILogger {
-	Logger = NewZap(cfg)
-	return Logger
 }
