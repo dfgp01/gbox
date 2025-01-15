@@ -7,26 +7,6 @@ import (
 )
 
 type (
-	Event interface {
-		Id() int
-		Data() interface{}
-		Err() error
-	}
-
-	BaseEvent struct {
-		id   int
-		data interface{}
-		err  error
-	}
-
-	EventListener func(Event)
-)
-
-func (e *BaseEvent) Id() int           { return e.id }
-func (e *BaseEvent) Data() interface{} { return e.data }
-func (e *BaseEvent) Err() error        { return e.err }
-
-type (
 	HashAvailable interface {
 		ToNumber() int64
 		ToString() string
