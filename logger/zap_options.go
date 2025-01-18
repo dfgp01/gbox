@@ -1,6 +1,8 @@
-package zp
+package logger
 
 import (
+	"io"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -42,19 +44,29 @@ func UseSugar() option {
 
 func WithEncoder(enc zapcore.Encoder) option {
 	return func(z *ZapLogger) {
-		z.corePart.enc = enc
+		z.enc = enc
 	}
 }
 
-func WithWriter(w zapcore.WriteSyncer) option {
+func WithWriter(w io.Writer) option {
 	return func(z *ZapLogger) {
-		z.corePart.writer = w
+		z.writer = zapcore.AddSync(w)
 	}
+}
+
+func UseRotateWriter(cfg *RotateLogConfig) option {
+	w := rotateLogWriter(cfg)
+	return WithWriter(w)
+}
+
+func UseLumberjackWriter(cfg *LumberjackConfig) option {
+	w := lumberjackLogWriter(cfg)
+	return WithWriter(w)
 }
 
 func WithLevel(l zapcore.Level) option {
 	return func(z *ZapLogger) {
-		z.corePart.lv = l
+		z.lv = l
 	}
 }
 

@@ -1,4 +1,4 @@
-package zp
+package logger
 
 //1.封裝zapLogger，公共接口，還有zap的一些函數轉換，因爲zapLogger應該不和component耦合
 //2.ZapComponent包裝zapLogger，用組件機制
