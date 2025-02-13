@@ -6,80 +6,71 @@ import (
 	"sync"
 )
 
-var (
+// 简单代表一下数据类型
+type Type int
 
-	// 目前只預存struct，避免無限遞歸
-	typeMapper   = make(map[string]*TypeObject)
-	typeMapperMu sync.RWMutex
-
-	_int      int
-	_int8     int8
-	_int16    int16
-	_int32    int32
-	_int64    int64
-	_uint     uint
-	_uint8    uint8
-	_uint16   uint16
-	_uint32   uint32
-	_uint64   uint64
-	_float32  float32
-	_float64  float64
-	_ints     []int
-	_int8s    []int8
-	_int16s   []int16
-	_int32s   []int32
-	_int64s   []int64
-	_uints    []uint
-	_uint8s   []uint8
-	_uint16s  []uint16
-	_uint32s  []uint32
-	_uint64s  []uint64
-	_float32s []float32
-	_float64s []float64
-	_bool     bool
-	_string   string
-	_bytes    []byte
+const (
+	Invalid Type = iota //不支持的类型，如chan、func、type interface、unsafe.pointer等
+	Any                 //定义时为interace{}类型，运行时不确定
+	Pointer             //指針類型，僅支持指向struct{}
+	Bool
+	Number
+	String
+	Struct
+	Slice //slice或array
+	Map   //key和value都支持的類型即可
 )
 
-func init() {
-	//缓存基础类型反射
-	hot(_int)
-	hot(_int8)
-	hot(_int16)
-	hot(_int32)
-	hot(_int64)
-
-	hot(_uint)
-	hot(_uint8)
-	hot(_uint16)
-	hot(_uint32)
-	hot(_uint64)
-
-	hot(_float32)
-	hot(_float64)
-
-	hot(_ints)
-	hot(_int8s)
-	hot(_int16s)
-	hot(_int32s)
-	hot(_int64s)
-
-	hot(_uints)
-	hot(_uint8s)
-	hot(_uint16s)
-	hot(_uint32s)
-	hot(_uint64s)
-
-	hot(_float32s)
-	hot(_float64s)
-
-	hot(_bool)
-	hot(_string)
-	hot(_bytes)
+type typeMapper struct {
+	sync.RWMutex
+	m map[string]*TypeObject
 }
 
-func hot(v interface{}) {
-	//buildTypeObject(reflect.TypeOf(v))
+func (tm *typeMapper) get(key string) *TypeObject {
+	tm.RLock()
+	defer tm.RUnlock()
+	if o, ok := tm.m[key]; ok {
+		return o
+	}
+}
+
+func (tm *typeMapper) exists(key string) bool {
+	if tm.get(key) {
+		return true
+	}
+	tm.Lock()
+	tm.m[key] = &TypeObject{}
+	tm.Unlock()
+	return false
+}
+
+var (
+	// 目前只預存struct，避免無限遞歸
+	tm = typeMapper{m: make(map[string]*TypeObject)}
+)
+
+func isTypeIn(t Type, ts ...Type) bool {
+	if len(ts) <= 0 {
+		return true
+	}
+	for _, v := range ts {
+		if t == v {
+			return true
+		}
+	}
+	return false
+}
+
+func isTypeNotIn(t Type, ts ...Type) bool {
+	if len(ts) <= 0 {
+		return false
+	}
+	for _, v := range ts {
+		if t == v {
+			return false
+		}
+	}
+	return true
 }
 
 func isBase(tk reflect.Kind) bool {
@@ -114,7 +105,7 @@ func isFloat(tk reflect.Kind) bool {
 }
 
 // 类型設定
-func refType(t reflect.Type) ObjType {
+func refType(t reflect.Type) Type {
 	if t == nil {
 		//interface{} or type interface，but not sure
 		return Invalid
@@ -139,32 +130,12 @@ func refType(t reflect.Type) ObjType {
 		return Map
 	} else if k == reflect.Pointer {
 		//指针的下级只能是struct
-		if t.Elem().Kind() == reflect.Struct {
-			return Pointer
-		}
+		// if t.Elem().Kind() == reflect.Struct {
+		// 	return Pointer
+		// }
 	}
 	//other invalid
 	return Invalid
-}
-
-func nameSymbol(tp ObjType, rt reflect.Type) string {
-
-	switch tp {
-	case Invalid:
-		return "!"
-	case Any:
-		return "{%s}"
-	case Pointer:
-		return "*%s"
-	case Slice:
-		return "[]%s"
-	case Map:
-		return "<%s,%s>"
-	case Struct:
-		return fmt.Sprintf("%s/%s", rt.PkgPath(), rt.Name())
-	default:
-		return rt.Name()
-	}
 }
 
 // 遞歸構建反射定義對象
@@ -173,66 +144,35 @@ func buildTypeObject(rt reflect.Type) *TypeObject {
 	//先判斷是否支持的類型
 	obj := &TypeObject{rt: rt}
 	obj.tp = refType(rt)
-	//名稱佔位符
-	obj.symbol = nameSymbol(obj.tp, rt)
 
 	if obj.tp == Invalid {
-		//todo 目前無法確定是否定義的interface
-		// if _, ok := v.(interface{}); ok {
-		// 	obj.tp = Any
-		// 	obj.defAny = true
-		// } else {
-		// 	//不支持的類型
-		// 	obj.symbol = ""
-		// }
 		return obj
-	}
-
-	if o, ok := typeMapper[obj.symbol]; ok {
-		return o
-	}
-
-	//先占位，防struct{}無限遞歸
-	if obj.tp == Struct {
-		typeMapperMu.RLock()
-		if o, ok := typeMapper[obj.symbol]; ok {
-			return o
-		}
-		typeMapperMu.RUnlock()
-		typeMapperMu.Lock()
-		typeMapper[obj.symbol] = obj
-		typeMapperMu.Unlock()
 	}
 
 	//根據具體類型遞歸
 	switch obj.tp {
 	case Pointer, Slice:
-
 		sub := buildTypeObject(obj.rt.Elem())
 		obj.sub = sub
-		obj.symbol = fmt.Sprintf(obj.symbol, sub.symbol)
 		if sub.tp == Invalid {
-			//錯誤往上傳遞
+			//往上傳遞不支持的類型
 			obj.tp = Invalid
 		}
-
 	case Struct:
-
+		//防止無限遞歸
 		obj.name = rt.Name()
 		for i := 0; i < rt.NumField(); i++ {
 			sf := rt.Field(i)
-			fieldObj := buildTypeObject(sf.Type)
+			fieldObj := buildTypeObject2(sf.Type)
 			if fieldObj.tp != Invalid {
 				fieldObj.sf = &sf
 				fieldObj.name = sf.Name
 				obj.fields = append(obj.fields, fieldObj)
 			}
 		}
-
 	case Map:
-
-		keyT := buildTypeObject(obj.rt.Key())
-		valT := buildTypeObject(obj.rt.Elem())
+		keyT := buildTypeObject2(obj.rt.Key())
+		valT := buildTypeObject2(obj.rt.Elem())
 		obj.key, obj.val = keyT, valT
 		obj.symbol = fmt.Sprintf(obj.symbol, keyT.symbol, valT.symbol)
 		if keyT.tp == Invalid || valT.tp == Invalid {
@@ -243,4 +183,9 @@ func buildTypeObject(rt reflect.Type) *TypeObject {
 	}
 
 	return obj
+}
+
+// 遞歸構建反射值對象
+func buildValueObject(rv reflect.Value) *ValueObject {
+	return &ValueObject{rv: rv}
 }

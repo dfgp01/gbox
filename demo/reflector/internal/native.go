@@ -149,3 +149,42 @@ func isFloat(tk reflect.Kind) bool {
 		tk == reflect.Complex64 ||
 		tk == reflect.Complex128
 }
+
+func ReflectTest2() {
+	var a interface{}
+	var b int = 5
+	var c string = "hi"
+
+	ta, va := reflect.TypeOf(a), reflect.ValueOf(a)
+	tb, vb := reflect.TypeOf(b), reflect.ValueOf(b)
+	tc, vc := reflect.TypeOf(c), reflect.ValueOf(c)
+
+	fmt.Println("1", ta, tb, tc, va, vb, vc)
+
+	a = b
+	ta2, va2 := reflect.TypeOf(a), reflect.ValueOf(a)
+	fmt.Println("2", ta == ta2, ta2 == tb, va2 == vb)
+
+	a = c
+	ta3, va3 := reflect.TypeOf(a), reflect.ValueOf(a)
+	fmt.Println("3", ta == ta3, ta3 == tc, va3 == vc)
+}
+
+type MyStruct struct {
+	FieldA int
+	FieldB interface{}
+}
+
+func ReflectTest3() {
+	var a MyStruct
+	ta1, va1 := reflect.TypeOf(a).Field(1), reflect.ValueOf(a).Field(1)
+	fmt.Println("1", ta1, va1, va1.Type())
+
+	a.FieldB = 100
+	_, va2 := reflect.TypeOf(a).Field(1), reflect.ValueOf(a).Field(1)
+	fmt.Println("2", va1.Type() == va2.Type(), va1.Type().Kind(), va1.Kind(), va2.Type().Kind(), va2.Kind())
+
+	a.FieldB = "100"
+	ta3, va3 := reflect.TypeOf(a).Field(1), reflect.ValueOf(a).Field(1)
+	fmt.Println("3", ta1.Type == ta3.Type, va1.Type() == va3.Type())
+}
