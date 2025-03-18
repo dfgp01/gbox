@@ -2,7 +2,6 @@ package reflector2
 
 import (
 	"fmt"
-	"reflect"
 )
 
 type (
@@ -15,11 +14,9 @@ type (
 )
 
 func Iterator(v interface{}, handler func(w *RefObject) bool) {
-	rt, rv := reflect.TypeOf(v), reflect.ValueOf(v)
 
 	// 若 v 是any定義，那麽rt為空
-
-	root := newRefObject(rt, &rv)
+	root := NewRefObject(v)
 
 	// new iter
 	caller := &Caller{
@@ -29,11 +26,11 @@ func Iterator(v interface{}, handler func(w *RefObject) bool) {
 	}
 
 	caller.step(root)
+}
 
-	//TODO 截至2025.03.08，需要實現以下：
-	//將Iter對象傳進handler，裏面有當前RefObject，
-	//handler返回false時，跳出當前iter，進入鄰節點繼續
-	//通過自行調用farward()，進入下一級的RefObject，這裏會進棧，結束後再繼續後面的邏輯，參考middleware
+func (c *Caller) step(next *RefObject) bool {
+	c.curr = next
+	return c.handler(next)
 }
 
 // forward 進入下一層級，根據類型進行不同處理
@@ -41,25 +38,26 @@ func (c *Caller) Forward() {
 
 	var (
 		obj = c.curr
-		val = c.curr.val
 	)
 
-	//本身是否有效
-	if !obj.Valid() {
+	//是否有效對象
+	if !obj.ValidVal() {
 		return
 	}
 
 	// 可以進入下一層的類型，基礎類型直接退回
-	if !isTypeIn(val.tp, Pointer, Struct, Slice, Map) {
+	tp := obj.canStep()
+	if tp == Invalid {
 		return
-		//iter.prep = iter.curr
-		//iter.prep.index = 0
 	}
 
-	switch val.tp {
+	//iter.prep = iter.curr
+	//iter.prep.index = 0
+
+	switch tp {
 	case Pointer:
-		buildPtr(obj)
-		c.step(val.step)
+		next := buildPtr(obj)
+		c.step(next)
 	case Struct:
 		//TODO 注意單純 struct{}問題
 		buildStruct(obj)
@@ -87,9 +85,4 @@ func (c *Caller) Forward() {
 		//基礎類型，不需要進入，結束
 		return
 	}
-}
-
-func (c *Caller) step(next *RefObject) bool {
-	c.curr = next
-	return c.handler(next)
 }

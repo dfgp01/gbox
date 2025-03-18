@@ -1,8 +1,47 @@
-package reflector
+package reflector2
 
 import (
 	"reflect"
 )
+
+// 简单代表一下数据类型
+type Type int
+
+const (
+	Invalid Type = iota //不支持的类型，如chan、func、type interface、unsafe.pointer等
+	Any                 //定义时为interace{}类型，运行时不确定
+	Pointer             //指針類型，僅支持指向struct{}
+	Bool
+	Number
+	String
+	Struct
+	Slice //slice或array
+	Map   //key和value都支持的類型即可
+)
+
+func (t Type) String() string {
+	switch t {
+	case Invalid:
+		return "Invalid"
+	case Any:
+		return "Any"
+	case Pointer:
+		return "Pointer"
+	case Bool:
+		return "Bool"
+	case Number:
+		return "Number"
+	case String:
+		return "String"
+	case Struct:
+		return "Struct"
+	case Slice:
+		return "Slice"
+	case Map:
+		return "Map"
+	}
+	return ""
+}
 
 func isTypeIn(t Type, ts ...Type) bool {
 	if len(ts) <= 0 {
@@ -63,7 +102,7 @@ func isFloat(tk reflect.Kind) bool {
 func refType(t reflect.Type) Type {
 	if t == nil {
 		//interface{} or type interface，but not sure
-		return Invalid
+		return Any
 	}
 	k := t.Kind()
 	if k == reflect.Interface {
@@ -84,10 +123,7 @@ func refType(t reflect.Type) Type {
 	} else if k == reflect.Map {
 		return Map
 	} else if k == reflect.Pointer {
-		//指针的下级只能是struct
-		// if t.Elem().Kind() == reflect.Struct {
-		// 	return Pointer
-		// }
+		return Pointer
 	}
 	//other invalid
 	return Invalid
