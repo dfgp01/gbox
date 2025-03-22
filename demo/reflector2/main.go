@@ -4,5 +4,5 @@ import "gbox/demo/reflector2/internal"
 
 func main() {
 
-	internal.RunNative()
+	internal.AliasUnsupportType()
 }

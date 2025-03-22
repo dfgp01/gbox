@@ -1,4 +1,4 @@
-package reflector2
+package reflector3
 
 import (
 	"fmt"
@@ -21,59 +21,73 @@ type (
 
 	// 反射对象包裝
 	RefObject struct {
-		refTp  reflect.Type         //反射refType
-		refVal *reflect.Value       //反射refValue
+		defAny bool                 //是否定義為any類型（好像意義不大）
+		refTp  reflect.Type         //反射值的實際refVal.Type()
+		refVal *reflect.Value       //反射值refValue
 		field  *reflect.StructField //field引用，僅為struct-field時
+
+		next   *RefObject                //為pointer時，指向的下一個對象
+		list   []*RefObject              //為slice時，對象列表
+		kv     map[*RefObject]*RefObject //為map時，key-value對象
+		fields []*RefObject              //為struct時，field對象列表
 	}
 )
 
-// 臨時的
-func (r *RefObject) Print() {
-	fmt.Printf("RefObject Info:\n")
+func PrintDefinition(t reflect.Type) {
 	fmt.Printf("  Definition:\n")
-	fmt.Printf("    Type: %v\n", r.def.tp.String())
-	fmt.Printf("    Name: %v\n", r.def.name)
-	fmt.Printf("    Full Path: %v\n", r.def.full)
+	fmt.Printf("    Type: %v\n", t.String())
+	fmt.Printf("    Kind: %v\n", t.Kind())
+	fmt.Printf("    Name: %v\n", t.Name())
+	fmt.Printf("    FullPath: %v\n", t.PkgPath())
+}
 
-	switch r.def.tp {
-	case Pointer, Slice:
-		fmt.Printf("    Element Type: %v\n", r.def.step.String())
-	case Map:
-		fmt.Printf("    Map Key Type: %v\n", r.def.mapKeyT.String())
-		fmt.Printf("    Map Value Type: %v\n", r.def.mapValT.String())
-	case Struct:
-		if r.def.refTp != nil {
-			fmt.Printf("    Fields Count: %d\n", r.def.refTp.NumField())
-		}
-	}
-
-	if r.def.sf != nil {
-		fmt.Printf("    Field Name: %s, Tag: %s\n", r.def.name, r.def.sf.Tag)
-	}
-
-	// 以下是 val 部分
-
+func PrintValue(v *reflect.Value) {
 	fmt.Printf("  Value:\n")
-	fmt.Printf("    Type: %v\n", r.val.tp.String())
+	fmt.Printf("    IsValid: %v\n", v.IsValid())
+	if v.IsValid() {
+		// panic if !v.IsValid()
+		fmt.Printf("    CanInterface: %v\n", v.CanInterface())
+		fmt.Printf("    IsNil: %v\n", v.IsNil())
+		fmt.Printf("    IsZero: %v\n", v.IsZero())
+		fmt.Printf("    Type: %v\n", v.Type().String())
+		fmt.Printf("    Value: %v\n", v.Interface())
+	}
+}
 
-	if r.val.refVal.IsValid() {
-		switch r.val.tp {
-		case Map:
-			fmt.Printf("    Map Entries: %d\n", r.Len())
-		case String, Slice:
-			fmt.Printf("    Length: %d\n", r.Len())
-		case Struct:
-			fmt.Printf("    Available Fields Count: %d\n", r.Len())
-		}
-
-		if r.val.refVal.CanInterface() {
-			fmt.Printf("    Value: %v\n", r.val.refVal.Interface())
-		}
+// 臨時的
+func (r *RefObject) Print(title string) {
+	fmt.Printf("************** %s :\n", title)
+	defer func() {
+		// 以下是 val 部分
+		PrintValue(r.refVal)
+		fmt.Printf("\n")
+	}()
+	if r.refTp == nil {
+		fmt.Printf("   defAny: %v\n", r.defAny)
+		return
 	}
 
-	fmt.Printf("    Has Pointer Element: %v\n", r.val.step != nil)
-	fmt.Printf("    List Items: %d\n", len(r.val.list))
-	fmt.Printf("    Map Entries: %d\n", len(r.val.kv))
+	PrintDefinition(r.refTp)
+
+	switch refType(r.refTp) {
+	case Pointer:
+		fmt.Printf(" *Element\n")
+		PrintDefinition(r.refTp.Elem())
+	case Slice:
+		fmt.Printf(" []Element\n")
+		PrintDefinition(r.refTp.Elem())
+	case Map:
+		fmt.Printf(" Map Key\n")
+		PrintDefinition(r.refTp.Key())
+		fmt.Printf(" Map Value\n")
+		PrintDefinition(r.refTp.Elem())
+	case Struct:
+		for i := 0; i < r.refTp.NumField(); i++ {
+			field := r.refTp.Field(i)
+			fmt.Printf(" Field Name: %s, Tag: %s\n", field.Name, field.Tag)
+			PrintDefinition(field.Type)
+		}
+	}
 }
 
 // 長度，slice、map、string的len()，struct的有效field數量
@@ -98,7 +112,7 @@ func (r *RefObject) fieldDefs(rt reflect.Type) []*reflect.StructField {
 	fields := make([]*reflect.StructField, 0)
 	for i := 0; i < rt.NumField(); i++ {
 		field := rt.Field(i)
-		if !IsValidType(field.Type) {
+		if !isValidType(field.Type) {
 			continue
 		}
 		if field.Anonymous {
@@ -110,126 +124,77 @@ func (r *RefObject) fieldDefs(rt reflect.Type) []*reflect.StructField {
 	return fields
 }
 
-// 獲取struct的有效field，rv為struct的reflect.Value
-func (r *RefObject) fields(rv *reflect.Value) []*reflect.StructField {
-	if refType(rv.Type()) != Struct {
-		return nil
-	}
-	for i := 0; i < rv.NumField(); i++ {
-		field := rv.Field(i)
-
-		// if field.CanInterface() {
-		// 	fields = append(fields, field)
-		// }
-	}
-
-	return r.refVal.NumField()
-}
-
 func NewRefObject(v interface{}) *RefObject {
 	// var v any，那麽rt會是nil
 	rt, rv := reflect.TypeOf(v), reflect.ValueOf(v)
-	return newRefObject(rt, &rv)
+	return buildRefObject(rt, &rv)
 }
 
-func newRefObject(rt reflect.Type, rv *reflect.Value) *RefObject {
+func buildRefObject(rt reflect.Type, rv *reflect.Value) *RefObject {
 	ref := &RefObject{
 		refTp:  rt,
 		refVal: rv,
 	}
+	if rt == nil {
+		ref.defAny = true
+		return ref
+	}
+	//ref.refTp = rv.Type()
+	//ref.refVal = rv
+
+	switch refType(ref.refTp) {
+	case Pointer:
+		ref.next = buildPtr(ref)
+	case Slice:
+		ref.list = buildSlice(ref)
+	case Struct:
+		ref.fields = buildStruct(ref)
+	case Map:
+		ref.kv = buildMap(ref)
+	}
+
 	return ref
 }
 
-func newTypeObject(rt reflect.Type) *Def {
-
-	def := &Def{
-		tp:    refType(rt),
-		refTp: rt,
-	}
-
-	//淺層創建，不遞歸
-	switch def.tp {
-	case Pointer, Slice:
-		def.step = refType(rt.Elem())
-	case Struct:
-		//TODO 注意單純 struct{}問題
-		def.name = rt.Name()
-		def.full = fmt.Sprintf("%s/%s", rt.PkgPath(), rt.Name())
-	case Map:
-		def.mapKeyT = refType(rt.Key())
-		def.mapValT = refType(rt.Elem())
-	default:
-		//TODO 注意別名情況
-	}
-
-	return def
-
+func buildPtr(prep *RefObject) *RefObject {
+	v := prep.refVal.Elem()
+	return buildRefObject(prep.refTp.Elem(), &v)
 }
 
-func newValueObject(rv *reflect.Value) *Val {
-
-	//fmt.Println("111111111111", rv.IsValid())
-	//fmt.Println("222222222222", rv.IsZero())
-	//fmt.Println("333333333333", rv.IsNil())
-
-	val := &Val{
-		refVal: rv,
+// 構建slice對象
+func buildSlice(prep *RefObject) []*RefObject {
+	var list []*RefObject
+	for i := 0; i < prep.refVal.Len(); i++ {
+		sliceVal := prep.refVal.Index(i)
+		sliceObj := buildRefObject(prep.refTp.Elem(), &sliceVal)
+		if sliceObj.ValidVal() {
+			list = append(list, sliceObj)
+		}
 	}
-
-	if !rv.IsValid() {
-		val.tp = Invalid
-	} else if rv.IsNil() {
-		val.nl = true
-	} else {
-		val.tp = refType(rv.Type())
-	}
-
-	return val
+	return list
 }
 
-func buildPtr(s *RefObject) *RefObject {
-	v := s.refVal.Elem()
-	return newRefObject(v.Type(), &v)
-}
-
-// 構建struct對象，s為struct的RefObject
-func buildStruct(s *RefObject) []*RefObject {
+// 構建struct對象
+func buildStruct(prep *RefObject) []*RefObject {
 	//將合法的field加入list
 	var fields []*RefObject
-	for i := 0; i < s.refTp.NumField(); i++ {
-		field := s.refTp.Field(i)
-		fieldVal := s.refVal.Field(i)
-		fieldObj := newRefObject(field.Type, &fieldVal)
+	for i := 0; i < prep.refTp.NumField(); i++ {
+		field := prep.refTp.Field(i)
+		fieldVal := prep.refVal.Field(i)
+		fieldObj := buildRefObject(field.Type, &fieldVal)
 		fieldObj.field = &field
-		if fieldObj.ValidVal() {
-			fields = append(fields, fieldObj)
-		}
+		fields = append(fields, fieldObj)
 	}
 	return fields
 }
 
-// 構建slice對象，s為slice的RefObject
-func buildSlice(s *RefObject) []*RefObject {
-	var list []*RefObject
-	for i := 0; i < s.refVal.Len(); i++ {
-		sliceVal := s.refVal.Index(i)
-		sliceObj := newRefObject(sliceVal.Type(), &sliceVal)
-		if sliceObj.Valid() {
-			s.val.list = append(s.val.list, sliceObj)
-		}
+func buildMap(prep *RefObject) map[*RefObject]*RefObject {
+	m := make(map[*RefObject]*RefObject)
+	for _, key := range prep.refVal.MapKeys() {
+		mapKey := buildRefObject(prep.refTp.Key(), &key)
+		mapVal := prep.refVal.MapIndex(key)
+		mapObj := buildRefObject(mapVal.Type(), &mapVal)
+		m[mapKey] = mapObj
 	}
-}
-
-// 構建map對象，m為map的RefObject
-func buildMap(m *RefObject) {
-	// 將map-val的refVal，加入list
-	m.val.kv = make(map[*RefObject]*RefObject)
-	for _, key := range m.val.refVal.MapKeys() {
-		mapKey := newRefObject(m.def.refTp.Key(), &key)
-		v := m.val.refVal.MapIndex(key)
-		mapVal := newRefObject(m.def.refTp.Elem(), &v)
-		if mapKey.Valid() && mapVal.Valid() {
-			m.val.kv[mapKey] = mapVal
-		}
-	}
+	return m
 }

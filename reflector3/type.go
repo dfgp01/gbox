@@ -1,4 +1,4 @@
-package reflector2
+package reflector3
 
 import (
 	"reflect"
@@ -100,34 +100,33 @@ func isFloat(tk reflect.Kind) bool {
 
 // 类型設定
 func refType(t reflect.Type) Type {
-	// todo 可能要抽出
+	// todo 未必需要
 	if t == nil {
 		//interface{} or type interface，but not sure
-		return Any
+		return Invalid
 	}
-	k := t.Kind()
-	if k == reflect.Interface {
-		//函數入口処的參數為any類型，則Kind()就會等於reflect.Interface
-		//而參數為interface{}類型，則t=<nil>
+
+	switch t.Kind() {
+	case reflect.Interface:
 		return Any
-	}
-	if k == reflect.Bool {
+	case reflect.Bool:
 		return Bool
-	} else if k == reflect.String {
+	case reflect.String:
 		return String
-	} else if k == reflect.Struct {
+	case reflect.Struct:
 		return Struct
-	} else if isNumber(k) {
-		return Number
-	} else if k == reflect.Slice || k == reflect.Array {
+	case reflect.Slice, reflect.Array:
 		return Slice
-	} else if k == reflect.Map {
+	case reflect.Map:
 		return Map
-	} else if k == reflect.Pointer {
+	case reflect.Pointer:
 		return Pointer
+	default:
+		if isNumber(t.Kind()) {
+			return Number
+		}
+		return Invalid
 	}
-	//other invalid
-	return Invalid
 }
 
 // 校驗有效類型
@@ -150,29 +149,18 @@ func (r *RefObject) ValidDefType() bool {
 // 對象是否有效
 func (r *RefObject) ValidVal() bool {
 
-	// 檢查有效類型
-	return isValidType(r.refVal.Type())
-
-	// 數據有效性
-	return r.refVal.CanInterface()
+	// 檢查有效類型 和 數據有效性
+	return isValidType(r.refVal.Type()) && r.refVal.CanInterface()
 }
 
 // 對象是否爲空
 func (r *RefObject) Empty() bool {
-	// 檢查是否有值
-}
-
-// 定義類型是否為Any
-func (r *RefObject) defAny() bool {
-	return refType(r.refTp) == Any
+	return r.refVal.CanInterface() && r.refVal.Len() == 0
 }
 
 // 是否可以進入下一層
-func (r *RefObject) canStep() Type {
+func (r *RefObject) canStep() bool {
 	//todo panic
 	tp := refType(r.refVal.Type())
-	if isTypeIn(tp, Slice, Map, Struct, Pointer) {
-		return tp
-	}
-	return Invalid
+	return isTypeIn(tp, Slice, Map, Struct, Pointer)
 }

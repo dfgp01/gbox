@@ -1,4 +1,4 @@
-package reflector2
+package reflector3
 
 import (
 	"fmt"
@@ -46,38 +46,33 @@ func (c *Caller) Forward() {
 	}
 
 	// 可以進入下一層的類型，基礎類型直接退回
-	tp := obj.canStep()
-	if tp == Invalid {
+	if !obj.canStep() {
 		return
 	}
 
 	//iter.prep = iter.curr
 	//iter.prep.index = 0
 
-	switch tp {
+	switch refType(obj.refVal.Type()) {
 	case Pointer:
-		next := buildPtr(obj)
-		c.step(next)
+		c.step(obj.next)
 	case Struct:
 		//TODO 注意單純 struct{}問題
-		buildStruct(obj)
-		for _, next := range obj.val.list {
+		for _, next := range obj.fields {
 			if !c.step(next) {
 				break
 			}
 		}
 	case Slice:
-		buildSlice(obj)
-		for _, next := range obj.val.list {
+		for _, next := range obj.list {
 			if !c.step(next) {
 				break
 			}
 		}
 	case Map:
-		buildMap(obj)
-		for k, v := range obj.val.kv {
+		for k, v := range obj.kv {
 			if !c.step(v) {
-				fmt.Println(k.val.refVal.String())
+				fmt.Println(k, v)
 				break
 			}
 		}

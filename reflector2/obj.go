@@ -43,19 +43,19 @@ type (
 )
 
 // 臨時的
-func (r *RefObject) Print() {
-	fmt.Printf("RefObject Info:\n")
+func (r *RefObject) Print(title string) {
+	fmt.Printf("%s Info:\n", title)
 	fmt.Printf("  Definition:\n")
-	fmt.Printf("    Type: %v\n", r.def.tp.String())
+	fmt.Printf("    Type: %v\n", r.def.tp)
 	fmt.Printf("    Name: %v\n", r.def.name)
 	fmt.Printf("    Full Path: %v\n", r.def.full)
 
 	switch r.def.tp {
 	case Pointer, Slice:
-		fmt.Printf("    Element Type: %v\n", r.def.step.String())
+		fmt.Printf("    Element Type: %v\n", r.def.step)
 	case Map:
-		fmt.Printf("    Map Key Type: %v\n", r.def.mapKeyT.String())
-		fmt.Printf("    Map Value Type: %v\n", r.def.mapValT.String())
+		fmt.Printf("    Map Key Type: %v\n", r.def.mapKeyT)
+		fmt.Printf("    Map Value Type: %v\n", r.def.mapValT)
 	case Struct:
 		if r.def.refTp != nil {
 			fmt.Printf("    Fields Count: %d\n", r.def.refTp.NumField())
@@ -63,22 +63,26 @@ func (r *RefObject) Print() {
 	}
 
 	if r.def.sf != nil {
-		fmt.Printf("    Field Name: %s, Tag: %s\n", r.def.name, r.def.sf.Tag)
+		fmt.Printf("    Field Name: %s\n", r.def.sf.Name)
+		if len(r.def.sf.Tag) > 0 {
+			fmt.Printf("    Field Tag: %s\n", r.def.sf.Tag)
+		}
 	}
 
-	// 以下是 val 部分
-
 	fmt.Printf("  Value:\n")
-	fmt.Printf("    Type: %v\n", r.val.tp.String())
+	fmt.Printf("    Type: %v\n", r.val.tp)
+	if r.val.nl {
+		fmt.Printf("    Is Nil: true\n")
+	}
 
-	if r.val.refVal.IsValid() {
+	if r.val.refVal != nil && r.val.refVal.IsValid() {
 		switch r.val.tp {
-		case Map:
-			fmt.Printf("    Map Entries: %d\n", r.Len())
-		case String, Slice:
+		case String, Slice, Map:
 			fmt.Printf("    Length: %d\n", r.Len())
 		case Struct:
-			fmt.Printf("    Available Fields Count: %d\n", r.Len())
+			if r.val.refVal.Type().NumField() > 0 {
+				fmt.Printf("    Fields Count: %d\n", r.val.refVal.Type().NumField())
+			}
 		}
 
 		if r.val.refVal.CanInterface() {
@@ -167,11 +171,6 @@ func newTypeObject(rt reflect.Type) *Def {
 }
 
 func newValueObject(rv *reflect.Value) *Val {
-
-	//fmt.Println("111111111111", rv.IsValid())
-	//fmt.Println("222222222222", rv.IsZero())
-	//fmt.Println("333333333333", rv.IsNil())
-
 	val := &Val{
 		refVal: rv,
 	}
