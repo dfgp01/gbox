@@ -100,14 +100,8 @@ func isFloat(tk reflect.Kind) bool {
 
 // 类型設定
 func refType(t reflect.Type) Type {
-	// todo 未必需要
-	if t == nil {
-		//interface{} or type interface，but not sure
-		return Invalid
-	}
-
 	switch t.Kind() {
-	case reflect.Interface:
+	case reflect.Interface: //todo 注意這個
 		return Any
 	case reflect.Bool:
 		return Bool
@@ -151,11 +145,6 @@ func (r *RefObject) ValidVal() bool {
 
 	// 檢查有效類型 和 數據有效性
 	return isValidType(r.refVal.Type()) && r.refVal.CanInterface()
-}
-
-// 對象是否爲空
-func (r *RefObject) Empty() bool {
-	return r.refVal.CanInterface() && r.refVal.Len() == 0
 }
 
 // 是否可以進入下一層

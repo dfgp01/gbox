@@ -3,7 +3,6 @@ package internal
 type (
 	InterfaceAlias interface{}
 	AnyAlias       any
-	IntAlias       int
 	IntsAlias      []int
 	StructAlias    struct{}
 
