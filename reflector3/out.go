@@ -3,68 +3,83 @@ package reflector3
 import (
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 func PrintDef(t reflect.Type) {
-	printDefinition(t, "Def")
+	printDefinition(t, "reflect.Type")
 }
 
-func PrintValDef(t reflect.Type) {
-	printDefinition(t, "Act-Def")
+func PrintValDef(v *reflect.Value) bool {
+	if !v.IsValid() {
+		// panic if !v.IsValid() call: v.Type(), v.CanInterface(), v.IsNil(), v.IsZero(), v.Interface())
+		fmt.Printf("reflect.Value.Kind() is invalid\n")
+		return false
+	}
+	printDefinition(v.Type(), "reflect.Value.Type()")
+	return true
 }
 
 func printDefinition(t reflect.Type, desc string) {
 	if t == nil {
-		fmt.Printf("%s type is nil\n", desc)
+		fmt.Printf("%s is nil\n", desc)
 		return
 	}
-	fmt.Printf("%s %s:\n", desc, t.String())
+	base := fmt.Sprintf("%s: String=%s, Name=%v, Kind=%v, FullPath=%v", desc, t.String(), t.Name(), t.Kind(), t.PkgPath())
 	switch t.Kind() {
-	case reflect.Array, reflect.Slice, reflect.Pointer:
-		fmt.Printf("-- Type=%v, Kind=%v, Name=%v, FullPath=%v Elem=%v", t.String(), t.Kind(), t.Name(), t.PkgPath(), t.Elem().String())
 	case reflect.Map:
-		fmt.Printf("-- Type=%v, Kind=%v, Name=%v, FullPath=%v Key=%v Elem=%v", t.String(), t.Kind(), t.Name(), t.PkgPath(), t.Key().String(), t.Elem().String())
+		base += fmt.Sprintf(", Key=%v", t.Key().String())
+		fallthrough
+	case reflect.Array, reflect.Slice, reflect.Pointer:
+		base += fmt.Sprintf(", Elem=%v", t.Elem().String())
 	case reflect.Struct:
 		fields := make([]string, 0)
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
 			fields = append(fields, field.Name)
 		}
-		fmt.Printf("-- Type=%v, Kind=%v, Name=%v, FullPath=%v, fields=%v", t.String(), t.Kind(), t.Name(), t.PkgPath(), fields)
+		base += fmt.Sprintf(", fields=%v", fields)
 	default:
-		fmt.Printf("-- Type=%v, Kind=%v, Name=%v, FullPath=%v", t.String(), t.Kind(), t.Name(), t.PkgPath())
+		fmt.Printf("%s\n", base)
 	}
-	fmt.Printf("\n")
 }
 
 func PrintValue(v *reflect.Value) {
-	fmt.Printf("%s Value IsValid: %v\n", v.String(), v.IsValid())
-	if !v.IsValid() {
+	if !PrintValDef(v) {
 		return
 	}
-	// panic if !v.IsValid()
-	fmt.Printf("-- CanInterface=%v, IsNil=%v, IsZero=%v, Value=%v\n", v.CanInterface(), v.IsNil(), v.IsZero(), v.Interface())
+	base := fmt.Sprintf("reflect.Value: String=%s, Kind=%v, CanInterface=%v, Value=%v", v.String(), v.Kind(), v.CanInterface(), v.Interface())
 
 	switch v.Kind() {
 	case reflect.Pointer:
-		fmt.Printf("-- Kind=%v, Elem=%v", v.Kind(), v.Elem().String())
-	case reflect.Array, reflect.Slice:
-		fmt.Printf("-- Kind=%v, Len=%v", v.Kind(), v.Len())
+		base += fmt.Sprintf(", Elem=%v", v.Elem().String())
+	case reflect.Array, reflect.Slice, reflect.String:
+		base += fmt.Sprintf(", Len=%v", v.Len())
 	case reflect.Map:
-		fmt.Printf("-- Kind=%v, Keys=%v", v.Kind(), len(v.MapKeys()))
+		base += fmt.Sprintf(", Len=%v, KeyLen=%v", v.Len(), len(v.MapKeys()))
 	case reflect.Struct:
-		fmt.Printf("-- Kind=%v, Fields=%v", v.Kind(), v.NumField())
-	default:
-		fmt.Printf("-- Kind=%v", v.Kind())
+		base += fmt.Sprintf(", FieldLen=%v", v.NumField())
 	}
-	fmt.Printf("\n")
+	fmt.Printf("%s\n", base)
 }
 
 // 臨時的
 func (r *Node) Print(title string) {
 
-	fmt.Printf("var %s -> %s\n", title, r.GetStackName())
+	fmt.Printf("var=%s, stack=%s\n", title, r.GetStackName())
 	PrintDef(r.obj.RefTp())
-	PrintValDef(r.obj.RefVal().Type())
 	PrintValue(r.obj.RefVal())
+}
+
+// 臨時測試方法
+func (n *Node) GetStackName() string {
+	var stack []string
+	for n := n; n != nil; n = n.parent {
+		stack = append(stack, n.Name)
+	}
+	// 將stack反過來
+	for i, j := 0, len(stack)-1; i < j; i, j = i+1, j-1 {
+		stack[i], stack[j] = stack[j], stack[i]
+	}
+	return strings.Join(stack, ".")
 }

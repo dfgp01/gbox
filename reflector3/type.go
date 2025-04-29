@@ -103,6 +103,8 @@ func refType(t reflect.Type) Type {
 	switch t.Kind() {
 	case reflect.Interface: //todo 注意這個
 		return Any
+	case reflect.Invalid:
+		return Invalid
 	case reflect.Bool:
 		return Bool
 	case reflect.String:

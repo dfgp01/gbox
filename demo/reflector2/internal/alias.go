@@ -1,10 +1,7 @@
 package internal
 
 type (
-	InterfaceAlias interface{}
-	AnyAlias       any
-	IntsAlias      []int
-	StructAlias    struct{}
+	StructAlias struct{}
 
 	AsMyStruct  MyStructA
 	AsMyStructP *MyStructA
@@ -14,7 +11,6 @@ var (
 	interAlias    InterfaceAlias
 	anyAlias      AnyAlias
 	intAlias      IntAlias
-	intsAlias     IntsAlias
 	structAlias   StructAlias
 	myStructAlias MyStructA
 )
@@ -42,40 +38,3 @@ var (
 	wrongSliceChanAlias  WrongSliceChanAlias
 	wrongSliceChanAlias2 WrongSliceChanAlias2
 )
-
-func AliasUnsupportType() {
-	// 以下的Value都支持：
-	// IsValid: true
-	// CanInterface: true
-	// IsNil: true
-	// IsZero: true
-
-	// Type: internal.WrongFuncAlias
-	// Kind: func
-	// Name: WrongFuncAlias
-	// FullPath: gbox/demo/reflector2/internal
-	nativeAnyDef(wrongInterfaceAlias, "wrongInterfaceAlias")
-
-	// Name and FullPath is nil
-	nativeAnyDef(wrongFuncAlias, "wrongFuncAlias")
-
-	nativeAnyDef(wrongChanAlias, "wrongChanAlias")
-
-	//Name: MyChan FullPath: gbox/demo/reflector2/internal
-	nativeAnyDef(wrongMapAlias, "wrongMapAlias")
-
-	nativeAnyDef(wrongSliceChanAlias, "wrongSliceChanAlias")
-
-	nativeAnyDef(wrongSliceChanAlias2, "wrongSliceChanAlias2")
-
-}
-
-// 帶別名，未賦值
-func AliasRun() {
-	nativeAnyDef(interAlias, "interAlias")
-	nativeAnyDef(anyAlias, "anyAlias")
-	nativeAnyDef(intAlias, "intAlias")
-	nativeAnyDef(intsAlias, "intsAlias")
-	nativeAnyDef(structAlias, "structAlias")
-	nativeAnyDef(myStructAlias, "myStructAlias")
-}

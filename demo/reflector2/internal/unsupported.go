@@ -7,18 +7,24 @@ import "gbox/reflector3"
 **/
 
 type (
-	Fn      func()
-	Ch      chan int
-	MapFn   map[int]Fn
-	MapCh   map[int]Ch
-	SlcFn   []Fn
-	SlcCh   []Ch
-	PtrFn   *Fn
-	PtrCh   *Ch
-	MapFnk  map[*Fn]int
-	MapChk  map[Ch]int
 	AliasFn func()
 	AliasCh chan int
+)
+
+var (
+	Fn      func()
+	FnAlias AliasFn
+	Ch      chan int
+	ChAlias AliasCh
+	MapFn   map[int]func()
+	MapCh   map[int]chan int
+	SlcFn   []func()
+	SlcCh   []chan int
+	PtrFn   *func()
+	PtrCh   *chan int
+	MapFnk  map[*func()]int
+	MapChk  map[chan int]int
+
 	PtrAny  *any
 	TwinPtr **int
 )
@@ -27,4 +33,9 @@ func UnsupportedRun(_var any, title string) {
 	reflector3.Iterator(_var, func(n *reflector3.Node) {
 		n.Print(title)
 	})
+}
+
+func UnsupportedRunALl() {
+	UnsupportedRun(Fn, "Fn")
+	UnsupportedRun(FnAlias, "FnAlias")
 }

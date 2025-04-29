@@ -1,6 +1,7 @@
 package reflector3
 
 import (
+	"fmt"
 	"reflect"
 )
 
@@ -24,6 +25,11 @@ type (
 		emptyVar bool           //是否為空變量（TODO 同上）
 		refTp    reflect.Type   //反射值的實際refVal.Type()
 		refVal   *reflect.Value //反射值refValue
+	}
+
+	// 未知類型，refTp=nil
+	AnyObject struct {
+		RefObject
 	}
 
 	// 不支持的類型
@@ -59,6 +65,13 @@ type (
 	SliceRefObject struct {
 		RefObject
 		elems []Object //slice内的對象
+	}
+
+	// map的key-value對象
+	MapEntryObject struct {
+		RefObject
+		key   Object //map的key
+		value Object //map的value
 	}
 
 	// map類型反射對象
@@ -181,18 +194,18 @@ func NewRefObject(v interface{}) Object {
 }
 
 func buildReflector(rt reflect.Type, rv *reflect.Value) Object {
-	if rt == nil {
-		return &InvalidObject{
-			RefObject: RefObject{
-				defAny:   true, //todo defAny可能是僞需求
-				emptyVar: true, //var v any
-			},
-		}
-	}
-
 	in := RefObject{
 		refTp:  rt,
 		refVal: rv,
+	}
+
+	if rt == nil {
+		o := &AnyObject{
+			RefObject: in,
+		}
+		o.defAny = true
+		o.emptyVar = true
+		return o
 	}
 
 	switch tp := refType(rt); tp {
@@ -200,6 +213,7 @@ func buildReflector(rt reflect.Type, rv *reflect.Value) Object {
 		return &InvalidObject{in}
 	case Any:
 		// 嘗試能不能走到這裏？？？
+		fmt.Println("sssssssssssssssssssssssssssssssssssssss", rt.String())
 		return nil
 	case Bool, Number, String:
 		return &BaseRefObject{
