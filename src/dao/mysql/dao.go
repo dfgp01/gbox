@@ -6,7 +6,6 @@ import (
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"gorm.io/plugin/dbresolver"
 )
 
@@ -17,10 +16,13 @@ type DAO struct {
 
 // NewDAO 创建新的DAO实例
 func NewDAO(mysqlConfig *MySQLConfig, gormConfig *GormConfig) (*DAO, error) {
-	// 创建GORM配置
-	gormCfg := &gorm.Config{}
-	if gormConfig.LogMode {
-		gormCfg.Logger = logger.Default.LogMode(logger.Info)
+
+	//check mysqlConfig
+	if mysqlConfig == nil || mysqlConfig.Master == nil {
+		return nil, fmt.Errorf("mysqlConfig or mysqlConfig.Master is nil")
+	}
+	if gormConfig == nil {
+		return nil, fmt.Errorf("gormConfig is nil")
 	}
 
 	// 创建主库DSN
@@ -48,7 +50,7 @@ func NewDAO(mysqlConfig *MySQLConfig, gormConfig *GormConfig) (*DAO, error) {
 	}
 
 	// 连接主库
-	db, err := gorm.Open(mysql.Open(masterDSN), gormCfg)
+	db, err := gorm.Open(mysql.Open(masterDSN), gormConfig.ToGormConfig())
 	if err != nil {
 		return nil, fmt.Errorf("connect master db error: %v", err)
 	}

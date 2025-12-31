@@ -1,13 +1,13 @@
 package model
 
-import "errors"
-
+// `Pager` ，用於分頁查詢，不受具體數據庫約束
 type Page struct {
 	No    int `json:"no"`    //當前頁
 	Size  int `json:"size"`  //每頁數量
-	Count int `json:"count"` //總條數
+	Count int `json:"count"` //總數據量
 }
 
+// 默认处理
 func (p *Page) Default() {
 	if p.No <= 0 {
 		p.No = 1
@@ -28,5 +28,3 @@ type PageResult[T any] struct {
 	Page
 	Items []T `json:"items"`
 }
-
-var ErrRecordNotFound = errors.New("record not found")

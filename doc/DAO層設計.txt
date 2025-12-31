@@ -1,0 +1,176 @@
+# DAO 层设计
+
+
+## 设计初衷
+1. **统一数据结构描述**  
+   用于描述数据在数据库中的结构，进行公共抽象，涵盖 MySQL、Mongo 等数据库，提供统一接口。
+2. **缓存与数据库分离**  
+   另一种 Cache-DAO 用于描述数据在 Redis 中的结构和关系，与常规 DAO 互相独立，接口不同。
+3. **表与 DAO 对应**  
+   每个 DAO 对应一张数据表和若干公共接口，例如 UserDAO 对应 user 表或 users 表。
+
+###	强约束和表的设计原则
+- 数据库连接建立后，`gorm.DB` 必须保持为单例。
+- 通过 `NewDAO(db)` 创建 DAO，`db` 来自原始 `db` 的克隆。
+- gorm插件先行解决主从同步问题，乐观锁和版本机制，用强制的接口如Sync()来保证原子性
+- 可更新的，继承gorm.Model外，也可以继承Udpateable()，有version字段，新增时从0开始
+
+## 表的设计原则
+
+### MySQL
+- **默认使用GORM**：每个实体必须继承 `gorm.Model`，`deleted_at` 造成的列和索引浪费可以忽略不计。
+- **自增ID**：每个表都有一个自增 ID（`gorm.Model` 已有），不与业务挂钩。每个业务都有自己的主表，有一个 `string` 类型的业务 ID，例如 users 表的 account（可以是 UUID、A12345，甚至是数字字符串如 50001）。
+- **字段设计**：
+  - 部分表可能包含 `status` 或 `type` 字段，建议用enmu，业务层通过全局字典管理。
+  - 若表中含有其他表的外键，则使用 `{table}_id` 格式，例如 `user_id` 表示 user 表的 ID。建议为外键字段创建 B-tree 索引，由 Service 层检查合法性，避免数据库负担过多。
+
+### MongoDB
+- **适用场景**：适用于不需要事务、不需要强关联的表，例如：
+  - 全局字典表：`label:"goldmind", value:"1", category:"game_type"`
+  - 多语言对照表：`key: "tips", zh-cn:"提示", en:"message tip"`
+  - 公共修改日志表：记录系统中的每一次增删改操作。
+- **特点**：这些表通常不需要 ID 关联，没有外部关联，也不需要复杂的查询或统计。
+
+
+### 属于orm的部分
+field-tag: `query:unique;exp=between;order=asc;`
+exp: gt, ge, lt, le, eq, ne, nil, nnil, between([2]slice), in([n]slice)
+
+`Option`
+	DAO的可選插件，DAO的接口都接受插件參數 ...options
+type Option func(daoDriver interface)
+
+
+
+### 属于 数据平台 的部分
+
+`Pager` ，用於分頁查詢，不受具體數據庫約束
+Pager{
+	no:1, 	//當前頁
+	size:10, 	//每頁數據量
+	count:3, 	//總數據量
+	total:27	//總頁數
+}
+
+`QueryParam`，DAO層的查詢結構，内嵌Pager，不要將其他層的request混進來，request的查詢結構應該貼合業務，QueryParam偏向通用設計，甚至以ORM方式驅動，將request轉爲QueryParam是service的邏輯
+interface QueryParam{
+	Pager() Pager
+	Unique() []string
+	Order() []string
+}
+實現QueryParam的好處是確保查詢參數是struct，且具有一些規範參數
+
+`Result`，查詢結果結構，内嵌PagerResp、List<T>分別對應分頁結果，全查結果，單個結果List(0)
+Result{
+	Pager
+	List<T>
+}
+
+`Error`
+	RecordNotFound，無論列表還是單個，不受具體數據庫約束，接口可決定是否嚴格返回錯誤，用Option形式，
+		例如：userDao.Get(1, ...option) => RequiredOption -> if (notFound){ return RecordNotFound }
+
+注意区分API层和DAO层的error，以下是数据平台API层的Error
+Error{
+	Code: 200
+	Msg: "my err msg"	//非必須
+	Data: error-ref		//内部Log，不到API層
+}
+200:		ok，正常，不是錯誤，只是缺省設置
+400:		record not found
+500:		internal error
+600:		外部組件錯誤，如mysql, redis等
+700:		外部請求錯誤，通常是第三方API
+701:		外部請求無回應
+702:		外部請求回應數據解析錯誤
+
+
+
+## 基础接口示例
+- **单条查询**：`Get(id) User`
+- **条件查询**：`List(condition) []User`
+- **分页查询**：`Page(condition) Pager<[]User>`
+- **创建**：`Create(User)` 新增记录
+- **更新**：`Update(User)` 修改记录，需实现 `Updatable()`
+- **删除**：`Delete(id)` 软删除，对于非 `Updatable()` 的记录，执行物理删除
+
+
+
+## 关于跨表关联查询
+涉及跨表的关联查询（如 JOIN、UNION、WITH 等）抛给上层 Service 处理。
+
+## 核心理念：约定优于配置
+- **固定命名**：`page`、`total`、`count` 等变量或名称固定，贯穿始终，无需额外字典或迁就其他需求。
+- **公共约定区**：先定义公共约定区，确保一致性。
+
+## 与其他层的关系
+- **Service 层**：负责组装关联数据，应提供公共封装，例如处理用户昵称等关联和事务。
+- **Controller 层**：决定请求和返回的结构，每个 Handler 对应客户端的一个功能 API 接口。
+
+## 公共修改记录表设计
+
+db_infos:
+{
+  "name": "db-test1"
+  "path": "database-addr:port",
+  "type": "mysql",
+  "extra": {  }	//未決定結構
+}
+
+change_logs:	結構要改，需要引入tx-id，因爲涉及多表修改事務，最好有關聯的ID和是否使用了事務
+{
+	"db_info_id": "bson.id"
+	"table_name": "users"
+	"data_id": 1234			//users表的主鍵ID
+	"action": "update deleted_at"
+	"contents": [{"field": "account", field_type:"string", "before": any, "after": any}]
+	"create_time", unix()
+}
+
+//建立索引（TODO：db_info_id和table_name做联合索引，没有单独查的场景 ）
+db.change_log.createIndex({ db_info_id: 1 });
+db.change_log.createIndex({ table_name: 1 });
+db.change_log.createIndex({ data_id: 1 });
+
+### 数据库支持
+- 根据 MySQL 或 MongoDB 做不同 DAO 实现，支持切换使用。
+- MySQL 字段：`id(uint)`、`create_time(datetime)`
+
+## DAO 的使用
+
+
+## 关于同步
+- **问题**：MySQL 主从同步可能导致问题，例如数据查询时 `status=1`，修改为 `2` 后，从库尚未同步完成，仍查询到 `1`，可能触发错误。
+- **解决方案**：
+  - 数据划分可修改的标签，如接口 `Updateable()`，继承字段 `version int`。
+  - 每次修改时判断原版本号，并递增数字，采用乐观锁机制：`update ... where version = {old}`。
+  - 同时记录公共修改日志。
+  - 在 `NewDAO()` 时，可指定主从，默认使用主库。
+- **解决方案（新）**
+  - 用gorm的主从插件，其他数据库暂不考虑同步（或者本身支持集群同步）
+
+## 總結，需要框架完成的規範化作業
+
+1、同步
+	mysql主从、热双；采用gorm插件
+
+2、sync数据版本
+	數據修改時，記錄Log，還有樂觀鎖等, version int 字段，事务内尝试一定次数的查询
+
+	NewMysqlDAO是最基礎的接口，所有Dao的建立都要調用它，會克隆原始DB
+	DAO的Update接口或者需要引入AOP的概念，即增加middleware的方式，可以根據指定tag，完成對需要修改部分字段的判斷，以及原數據的對比，這樣才能寫change_log，middleware的好處是可插拔，gorm應該也有相關的hook提供
+
+3、空值更新
+User{
+	Score int
+	Name string
+}
+問題：假如user.Score = 0，在gorm更新時會忽略score的更新，造成預期錯誤
+方案：使用指針結構
+User{
+	*Score int
+	*Name string
+}
+這樣在update的時候，一定會指明需要更新的字段，但是要解決空指針以及開發流暢度的問題
+不能使用Save()方法，因爲它會更新所有字段
+然而在衆多實際項目中，都不會采用指針結構字段，因爲增加了複雜度和使用風險，反而偏向用 map[string]interface{} 避免零值更新
