@@ -1,6 +1,9 @@
 package ecs
 
-// Query 批量查询：匹配“拥有 mask 中全部组件（允许更多）”的实体。
+import game "gbox/def/game"
+
+// Query 批量查询：匹配“拥有 mask 中全部组件（允许更多）”的实体，实现 game.Query 接口。
+// 注意：def/game.Query 是接口（Entity/Get），本类型是它的默认实现。
 //
 // 说明：World.archetypes 以“精确掩码”为 key，一个精确掩码只对应一个 Archetype；
 // 但 Query 是“超集匹配”（m&mask == mask，即至少包含这些组件），
@@ -14,10 +17,10 @@ package ecs
 // 迭代过程中不要对“当前实体”增删组件（会触发 Archetype 迁移、使迭代器失效）。
 // 若确有需要，可先收集实体快照再处理（StateMachineSystem 就是这么做的，见 fsm.go）。
 type Query struct {
-	mask    ComponentMask // 查询掩码
-	arches  []*Archetype  // 匹配的 Archetype 列表（超集匹配）
-	archIdx int           // 当前 Archetype 下标（超集匹配）
-	rowIdx  int           // 当前 Archetype 内的行号（下一行）
+	mask    game.ComponentMask // 查询掩码
+	arches  []*Archetype       // 匹配的 Archetype 列表（超集匹配）
+	archIdx int                // 当前 Archetype 下标（超集匹配）
+	rowIdx  int                // 当前 Archetype 内的行号（下一行）
 }
 
 // Next 前进到下一个匹配实体；无更多匹配时返回 false。
@@ -40,12 +43,12 @@ func (q *Query) Next() bool {
 }
 
 // Entity 返回当前实体 ID。
-func (q *Query) Entity() EntityID {
+func (q *Query) Entity() game.EntityID {
 	return q.arches[q.archIdx].entities[q.rowIdx-1]
 }
 
 // Get 返回当前实体上组件 id 的指针（any 中持有 *T），可原位修改。
 // 例如：pos := q.Get(idPos).(*Pos)；pos.X += 1 会真实写回存储。
-func (q *Query) Get(id ComponentID) any {
+func (q *Query) Get(id game.ComponentID) any {
 	return q.arches[q.archIdx].getPtr(id, q.rowIdx-1)
 }

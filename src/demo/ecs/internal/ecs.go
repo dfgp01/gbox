@@ -3,7 +3,8 @@ package internal
 import (
 	"fmt"
 
-	"gbox/game/ecs"
+	def "gbox/def/game"
+	game "gbox/pkg/game"
 )
 
 // Pos / Vel 演示组件：纯数据，不含 EntityId。
@@ -19,12 +20,12 @@ type Vel struct {
 func RunECSBasic() {
 	fmt.Println("===== ECS 基础演示 =====")
 
-	// 创建世界（World 是接口；组件注册表按世界独立）
-	w := ecs.NewWorld()
+	// 创建世界（def.World 是接口；默认绑定全局组件映射器的组件组）
+	w := game.NewWorld()
 
-	// 在世界中注册组件类型（重复注册安全，返回同一 ID）
-	idPos := ecs.RegisterComponent[Pos](w)
-	idVel := ecs.RegisterComponent[Vel](w)
+	// 在全局默认组件映射器中注册组件类型（重复注册安全，返回同一 ID）
+	idPos := game.RegisterComponent[Pos]()
+	idVel := game.RegisterComponent[Vel]()
 
 	// 1. Spawn：创建实体并附加组件值（任意组合、任意顺序）
 	e1 := w.Spawn(Pos{X: 1, Y: 2}, Vel{Vx: 3, Vy: 4})
@@ -47,8 +48,8 @@ func RunECSBasic() {
 
 	// 4. Query：掩码查询（超集匹配：拥有 mask 中全部组件的实体），回调遍历
 	//    这里查 Pos+Vel：e1 命中（Pos+Vel），e2 不命中（只有 Pos）。
-	posVelMask := ecs.Mask(idPos, idVel)
-	w.Query(posVelMask, func(e ecs.EntityID, q *ecs.Query) bool {
+	posVelMask := def.Mask(idPos, idVel)
+	w.Query(posVelMask, func(e def.EntityID, q def.Query) bool {
 		pos := q.Get(idPos).(*Pos) // Get 返回 *T 指针，可原位修改
 		vel := q.Get(idVel).(*Vel)
 		pos.X += vel.Vx // 修改会写回存储

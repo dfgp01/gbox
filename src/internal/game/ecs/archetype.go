@@ -3,52 +3,27 @@ package ecs
 import (
 	"reflect"
 	"strconv"
+
+	game "gbox/def/game"
 )
 
-// componentRegistry 组件类型注册表：维护 reflect.Type <-> ComponentID 的映射。
-// 反射逻辑集中在本文件（archetype.go），其他文件不直接使用 reflect。
-type componentRegistry struct {
-	byType map[reflect.Type]ComponentID // 反射类型 -> 组件 ID
-	byID   map[ComponentID]reflect.Type // 组件 ID -> 反射类型
+// componentResolver 组件解析契约：world 通过它完成“组件类型 <-> 组件 ID”的解析。
+// 由 pkg/game.ComponentMapper 实现（其内部持有映射，负责 ID 生成与类型校验），
+// 是 pkg 与 internal 之间的接线契约，不属于公共 API。
+type componentResolver interface {
+	// RegisterComponent 以实例 v 注册组件类型并返回其 ID（幂等）。
+	RegisterComponent(v any) game.ComponentID
+	// IDOf 返回实例 v 对应组件类型的 ID；未注册返回 (ComponentIDInvalid, false)。
+	IDOf(v any) (game.ComponentID, bool)
+	// TypeOf 返回组件 ID 对应的类型（供 Archetype 建列使用）；未注册返回 nil。
+	TypeOf(id game.ComponentID) reflect.Type
 }
 
-// newComponentRegistry 创建一个空注册表。
-func newComponentRegistry() *componentRegistry {
-	return &componentRegistry{
-		byType: make(map[reflect.Type]ComponentID),
-		byID:   make(map[ComponentID]reflect.Type),
-	}
-}
-
-// register 以实例 v 识别组件类型并注册，返回其组件 ID（幂等）。
-// v 必须是值类型（不允许指针/nil）；数量上限由调用方负责。
-func (r *componentRegistry) register(v any) ComponentID {
-	t := reflect.TypeOf(v)
-	if t == nil || t.Kind() == reflect.Pointer {
-		panic("ecs: 组件必须是值类型，不允许传指针或 nil")
-	}
-	if id, ok := r.byType[t]; ok {
-		return id
-	}
-	id := ComponentID(len(r.byID)) + 1 // 从 1 开始分配，0 保留为无效哨兵
-	r.byType[t] = id
-	r.byID[id] = t
-	return id
-}
-
-// idOf 返回实例 v 对应类型的组件 ID；未注册返回 (0, false)。
-func (r *componentRegistry) idOf(v any) (ComponentID, bool) {
-	t := reflect.TypeOf(v)
-	if t == nil {
-		return 0, false
-	}
-	id, ok := r.byType[t]
-	return id, ok
-}
-
-// typOf 返回组件 ID 对应的类型（供 Archetype 建列使用）。
-func (r *componentRegistry) typOf(id ComponentID) reflect.Type {
-	return r.byID[id]
+// componentRegistrar 具备组件注册能力的 World（内部契约）。
+// def/game.World 不再暴露组件注册（统一走 pkg/game.ComponentMapper），
+// 但内部实现 world 仍提供 RegisterComponent，供 StateMachineSystem 惰性注册 State。
+type componentRegistrar interface {
+	RegisterComponent(v any) game.ComponentID
 }
 
 // Column 列式存储中的一列：存储“同一组件类型的所有实例”。
@@ -97,39 +72,39 @@ func (c *Column) clearRow(row int) {
 //   - 实体在 Archetype 内使用 swap-remove 方式删除（O(1)）；
 //   - 增删组件本质是“实体从一个 Archetype 迁移到另一个 Archetype”。
 type Archetype struct {
-	mask     ComponentMask    // 该原型包含的组件组合（身份）
-	compIDs  []ComponentID    // 列对应的组件 ID（columns[i] 的元素类型即组件 i）
-	columns  []Column         // 列式存储
-	entities []EntityID       // 与各列行号对齐的实体 ID（dense）
-	row      map[EntityID]int // 实体 ID -> 行号（swap-remove 时同步维护）
-	n        int              // 有效行数（末尾为删除后残留的槽位）
+	mask     game.ComponentMask    // 该原型包含的组件组合（身份）
+	compIDs  []game.ComponentID    // 列对应的组件 ID（columns[i] 的元素类型即组件 i）
+	columns  []Column              // 列式存储
+	entities []game.EntityID       // 与各列行号对齐的实体 ID（dense）
+	row      map[game.EntityID]int // 实体 ID -> 行号（swap-remove 时同步维护）
+	n        int                   // 有效行数（末尾为删除后残留的槽位）
 }
 
 // newArchetype 以掩码创建 Archetype（按位展开得到列定义）。
-func newArchetype(mask ComponentMask, w *world) *Archetype {
+func newArchetype(mask game.ComponentMask, w *world) *Archetype {
 	a := &Archetype{
 		mask: mask,
-		row:  make(map[EntityID]int),
+		row:  make(map[game.EntityID]int),
 	}
 	// 逐位展开：第 bit 位为 1 ⇒ 组件 ID = bit+1
-	for bit := ComponentID(0); bit < maxComponents; bit++ {
-		if mask&(1<<bit) != 0 {
+	for bit := game.ComponentID(0); bit < game.MaxComponents; bit++ {
+		if mask&(game.Mask(1)<<bit) != 0 {
 			id := bit + 1
 			a.compIDs = append(a.compIDs, id)
-			a.columns = append(a.columns, Column{typ: w.reg.typOf(id)})
+			a.columns = append(a.columns, Column{typ: w.reg.TypeOf(id)})
 		}
 	}
 	return a
 }
 
 // hasType 是否包含指定组件。
-func (a *Archetype) hasType(id ComponentID) bool {
+func (a *Archetype) hasType(id game.ComponentID) bool {
 	_, ok := a.columnOf(id)
 	return ok
 }
 
 // columnOf 返回组件 ID 对应的列索引。
-func (a *Archetype) columnOf(id ComponentID) (int, bool) {
+func (a *Archetype) columnOf(id game.ComponentID) (int, bool) {
 	for i, cid := range a.compIDs {
 		if cid == id {
 			return i, true
@@ -139,7 +114,7 @@ func (a *Archetype) columnOf(id ComponentID) (int, bool) {
 }
 
 // addEntity 追加实体，返回其行号。
-func (a *Archetype) addEntity(e EntityID) int {
+func (a *Archetype) addEntity(e game.EntityID) int {
 	row := a.n
 	a.n++
 	if len(a.entities) < a.n {
@@ -162,7 +137,7 @@ func (a *Archetype) addEntity(e EntityID) int {
 }
 
 // removeEntity 移除实体（swap-remove，O(1)）。
-func (a *Archetype) removeEntity(e EntityID) {
+func (a *Archetype) removeEntity(e game.EntityID) {
 	row, ok := a.row[e]
 	if !ok {
 		return
@@ -186,7 +161,7 @@ func (a *Archetype) removeEntity(e EntityID) {
 }
 
 // getPtr 返回实体行 row 上组件 id 的指针（any 中持有 *T）。
-func (a *Archetype) getPtr(id ComponentID, row int) any {
+func (a *Archetype) getPtr(id game.ComponentID, row int) any {
 	ci, ok := a.columnOf(id)
 	if !ok {
 		panic("ecs: 该 Archetype 不包含组件 id=" + strconv.Itoa(int(id)))
