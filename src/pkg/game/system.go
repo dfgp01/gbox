@@ -36,7 +36,7 @@ func (b *BaseSystem) Disable() { b.disable = true }
 // Enabled 系统是否处于启用状态。
 func (b *BaseSystem) Enabled() bool { return !b.disable }
 
-// SystemGroup 系统组：仿照 ComponentMapper，专门维护一组 System。
+// SystemGroup 系统组：专门维护一组 System。
 // 可添加系统并按优先级降序稳定排序；一个系统组对应一组系统的调度集合。
 //
 // 默认提供全局唯一的系统组（DefaultSystemGroup）；也可通过 GetSystemGroup(key)
@@ -72,14 +72,15 @@ func GetSystemGroup(key int) *SystemGroup {
 	return g
 }
 
-// Add 添加一个系统，并立即按优先级降序稳定排序（同优先级保持添加顺序）。
-// 添加即启用（Enable）。系统需实现 def.System（通常内嵌 BaseSystem）。
-func (g *SystemGroup) Add(s def.System) {
-	if s == nil {
-		return
+// Add 添加系统，并立即按优先级降序稳定排序（同优先级保持添加顺序）。
+// 系统需实现 def.System（通常内嵌 BaseSystem）。
+func (g *SystemGroup) Add(sys ...def.System) {
+	for _, s := range sys {
+		if s == nil {
+			continue
+		}
+		g.systems = append(g.systems, s)
 	}
-	s.Enable() // 添加即启用
-	g.systems = append(g.systems, s)
 	sort.SliceStable(g.systems, func(i, j int) bool {
 		return g.systems[i].Priority() > g.systems[j].Priority()
 	})
