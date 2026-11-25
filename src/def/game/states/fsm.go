@@ -32,7 +32,11 @@ func (c FSMContext) Mark(event any) FSMContext {
 }
 
 // Action transforms an FSM context. It should not mutate external state.
-type Action func(FSMContext) FSMContext
+type Action struct {
+	OnEnter func(FSMContext) FSMContext
+	OnTick  func(FSMContext) (FSMContext, Status)
+	OnExit  func(FSMContext) FSMContext
+}
 
 // Guard checks whether an operation is allowed without changing state.
 type Guard func(FSMContext) bool
@@ -55,6 +59,7 @@ type Transition struct {
 type Node interface {
 	ID() StateID
 	Name() string
+	Type() NodeType
 	OnEnter(FSMContext) FSMContext
 	OnTick(FSMContext) (FSMContext, Status)
 	OnExit(FSMContext) FSMContext
@@ -62,7 +67,6 @@ type Node interface {
 	Guards() Guards
 	Children() []Node
 	Transitions() []Transition
-	Addons() []Action
 }
 
 // TickResult reports the completed work for one frame.
@@ -74,3 +78,13 @@ type TickResult struct {
 	Events       []any   // Event markers produced during this tick.
 	BranchPath   []int   // Guard branch path reported during this tick.
 }
+
+type NodeType uint8
+
+const (
+	Leaf NodeType = iota + 1
+	Terminal
+	Serial
+	Selector
+	Parallel
+)

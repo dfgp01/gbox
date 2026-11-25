@@ -55,6 +55,8 @@ func NewSerialNode(id def.StateID, name string, children ...def.Node) *SerialNod
 	}}}
 }
 
+func (n *SerialNode) NodeType() def.NodeType { return def.Serial }
+
 func (n *SerialNode) ScheduleChildren(runtime *NodeRuntime, tick ChildTickFunc, start, finish ChildLifecycleFunc, ctx def.FSMContext) (def.FSMContext, def.Status) {
 	children := n.Children()
 	if runtime.active >= len(children) {
@@ -91,6 +93,8 @@ func NewSelectorNode(id def.StateID, name string, children ...def.Node) *Selecto
 	}}}
 }
 
+func (n *SelectorNode) NodeType() def.NodeType { return def.Selector }
+
 func (n *SelectorNode) ScheduleChildren(runtime *NodeRuntime, tick ChildTickFunc, start, finish ChildLifecycleFunc, ctx def.FSMContext) (def.FSMContext, def.Status) {
 	children := n.Children()
 	if runtime.active >= len(children) {
@@ -126,6 +130,8 @@ func NewParallelNode(id def.StateID, name string, children ...def.Node) *Paralle
 		NodeID: id, NodeName: name, NodeChildren: append([]def.Node(nil), children...),
 	}}}
 }
+
+func (n *ParallelNode) NodeType() def.NodeType { return def.Parallel }
 
 func (n *ParallelNode) ScheduleChildren(runtime *NodeRuntime, tick ChildTickFunc, start, finish ChildLifecycleFunc, ctx def.FSMContext) (def.FSMContext, def.Status) {
 	children := n.Children()

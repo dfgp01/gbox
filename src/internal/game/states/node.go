@@ -29,13 +29,22 @@ func (n *BaseNode) Transitions() []def.Transition {
 // LeafNode is a leaf definition with default lifecycle behavior.
 // Embed it and override lifecycle methods to customize a leaf without storing callbacks.
 type LeafNode struct {
-	BaseNode // Structural definition shared with composite nodes.
+	BaseNode              // Structural definition shared with composite nodes.
+	Acions   []def.Action // Context transformations applied after this node ticks.
+	Addons   []def.Action // Context transformations applied after this node ticks.
 }
 
 var _ def.Node = (*LeafNode)(nil)
 
 func NewLeafNode(id def.StateID, name string) *LeafNode {
 	return &LeafNode{BaseNode: BaseNode{NodeID: id, NodeName: name}}
+}
+
+func (n *LeafNode) Type() def.NodeType {
+	if n.DefaultTo() == nil && n.Guards() == nil {
+		return def.Terminal
+	}
+	return def.Leaf
 }
 
 func (n *LeafNode) OnEnter(ctx def.FSMContext) def.FSMContext { return ctx }
@@ -45,5 +54,3 @@ func (n *LeafNode) OnTick(ctx def.FSMContext) (def.FSMContext, def.Status) {
 }
 
 func (n *LeafNode) OnExit(ctx def.FSMContext) def.FSMContext { return ctx }
-
-func (n *LeafNode) Addons() []def.Action { return nil }
