@@ -3,15 +3,17 @@
 The reusable state graph and per-unit runtime are provided by:
 
 - `gbox/def/game/states`: callback contracts and shared data types.
-- `gbox/pkg/game/states`: graph validation, node definitions, and FSM execution.
+- `gbox/pkg/game/states`: public graph/FSM API and guard combinators.
+- `gbox/internal/game/states`: node definitions and hierarchical scheduling implementations.
 
 This package is independent from the ECS APIs and from the legacy FSM in `gbox/def/game`.
 
 ## Define a graph
 
-Configure nodes before passing the root to `NewGraph`. Node definitions and their
-callbacks are shared; do not capture mutable per-unit data in callbacks. Put
-that data in `FSMContext.Data` instead.
+Configure nodes before passing the root to `NewGraph`. Node definitions are
+shared; do not capture mutable per-unit data in node behavior. Embed `LeafNode`
+and override `OnEnter`, `OnTick`, `OnExit`, or `Addons` methods to customize a
+leaf. Put per-unit data in `FSMContext.Data` instead.
 
 ```go
 idle := states.NewLeafNode(1, "idle")

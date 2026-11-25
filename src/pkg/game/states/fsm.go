@@ -7,49 +7,28 @@ import (
 	"sort"
 
 	def "gbox/def/game/states"
+	internal "gbox/internal/game/states"
 )
 
-// BaseNode is a reusable node definition. Configure it before building a graph.
-type BaseNode struct {
-	NodeID       def.StateID                                       // Identifier unique across the graph.
-	NodeName     string                                            // Name unique among this node's siblings.
-	FailTo       def.Node                                          // Fallback target when the node-level guards fail; nil means no fallback.
-	NodeGuards   def.Guards                                        // Conditions that gate ticking this node.
-	NodeChildren []def.Node                                        // Child definitions scheduled by a concrete composite node.
-	Edges        []def.Transition                                  // Outgoing transitions evaluated after this node ticks.
-	NodeAddons   []def.Action                                      // Context transformations run after the node's tick callback.
-	Enter        func(def.FSMContext) def.FSMContext               // Callback run when this node becomes active.
-	Tick         func(def.FSMContext) (def.FSMContext, def.Status) // Per-tick callback and execution status.
-	Exit         func(def.FSMContext) def.FSMContext               // Callback run when this node stops being active.
+// Node types are implemented internally; aliases preserve the pkg API.
+type BaseNode = internal.BaseNode
+type LeafNode = internal.LeafNode
+type SerialNode = internal.SerialNode
+type ParallelNode = internal.ParallelNode
+type SelectorNode = internal.SelectorNode
+
+func NewLeafNode(id def.StateID, name string) *LeafNode { return internal.NewLeafNode(id, name) }
+
+func NewSerialNode(id def.StateID, name string, children ...def.Node) *SerialNode {
+	return internal.NewSerialNode(id, name, children...)
 }
 
-func (n *BaseNode) ID() def.StateID               { return n.NodeID }
-func (n *BaseNode) Name() string                  { return n.NodeName }
-func (n *BaseNode) DefaultTo() def.Node           { return n.FailTo }
-func (n *BaseNode) Guards() def.Guards            { return n.NodeGuards }
-func (n *BaseNode) Children() []def.Node          { return append([]def.Node(nil), n.NodeChildren...) }
-func (n *BaseNode) Transitions() []def.Transition { return append([]def.Transition(nil), n.Edges...) }
-func (n *BaseNode) Addons() []def.Action          { return append([]def.Action(nil), n.NodeAddons...) }
-
-func (n *BaseNode) OnEnter(ctx def.FSMContext) def.FSMContext {
-	if n.Enter != nil {
-		return n.Enter(ctx)
-	}
-	return ctx
+func NewParallelNode(id def.StateID, name string, children ...def.Node) *ParallelNode {
+	return internal.NewParallelNode(id, name, children...)
 }
 
-func (n *BaseNode) OnTick(ctx def.FSMContext) (def.FSMContext, def.Status) {
-	if n.Tick != nil {
-		return n.Tick(ctx)
-	}
-	return ctx, def.Running
-}
-
-func (n *BaseNode) OnExit(ctx def.FSMContext) def.FSMContext {
-	if n.Exit != nil {
-		return n.Exit(ctx)
-	}
-	return ctx
+func NewSelectorNode(id def.StateID, name string, children ...def.Node) *SelectorNode {
+	return internal.NewSelectorNode(id, name, children...)
 }
 
 // FunctionalGuards adapts a function to the Guards contract.
@@ -116,42 +95,6 @@ func (g Not) Evaluate(ctx def.FSMContext) (bool, []int) {
 	}
 	passed, path := g.Subguards[0].Evaluate(ctx)
 	return !passed, path
-}
-
-// LeafNode is a node without scheduled children.
-type LeafNode struct {
-	BaseNode // Shared configuration and callbacks for a leaf.
-}
-
-func NewLeafNode(id def.StateID, name string) *LeafNode {
-	return &LeafNode{BaseNode: BaseNode{NodeID: id, NodeName: name}}
-}
-
-// SerialNode advances to the next child after each successful child.
-type SerialNode struct {
-	BaseNode // Shared configuration and callbacks for a serial composite.
-}
-
-func NewSerialNode(id def.StateID, name string, children ...def.Node) *SerialNode {
-	return &SerialNode{BaseNode: BaseNode{NodeID: id, NodeName: name, NodeChildren: append([]def.Node(nil), children...)}}
-}
-
-// ParallelNode ticks all unfinished children in declaration order.
-type ParallelNode struct {
-	BaseNode // Shared configuration and callbacks for a parallel composite.
-}
-
-func NewParallelNode(id def.StateID, name string, children ...def.Node) *ParallelNode {
-	return &ParallelNode{BaseNode: BaseNode{NodeID: id, NodeName: name, NodeChildren: append([]def.Node(nil), children...)}}
-}
-
-// SelectorNode advances after failures and succeeds on the first successful child.
-type SelectorNode struct {
-	BaseNode // Shared configuration and callbacks for a selector composite.
-}
-
-func NewSelectorNode(id def.StateID, name string, children ...def.Node) *SelectorNode {
-	return &SelectorNode{BaseNode: BaseNode{NodeID: id, NodeName: name, NodeChildren: append([]def.Node(nil), children...)}}
 }
 
 // Graph is an immutable, validated state graph shared by FSM instances.
@@ -265,12 +208,7 @@ type FSM struct {
 	proposals  []transitionProposal         // Transition requests awaiting arbitration this tick.
 }
 
-type nodeRuntime struct {
-	active   int    // Current child index for serial and selector composites.
-	started  []bool // Child indexes that have received OnEnter and not OnExit.
-	finished []bool // Child indexes that completed successfully in parallel.
-	failed   bool   // Whether a parallel child has failed.
-}
+type nodeRuntime = internal.NodeRuntime
 
 type transitionProposal struct {
 	weight    int        // Priority of the matching explicit edge.
@@ -415,11 +353,10 @@ func (f *FSM) enterNode(node def.Node, ctx def.FSMContext) def.FSMContext {
 
 func (f *FSM) exitNode(node def.Node, ctx def.FSMContext) def.FSMContext {
 	if runtime := f.runtime[node.ID()]; runtime != nil {
-		children := node.Children()
-		for index, child := range children {
-			if index < len(runtime.started) && runtime.started[index] {
+		for index, child := range node.Children() {
+			if runtime.ChildStarted(index) {
 				ctx = f.exitNode(child, ctx)
-				runtime.started[index] = false
+				runtime.SetChildStarted(index, false)
 			}
 		}
 	}
@@ -461,118 +398,35 @@ func (f *FSM) tickNodeGuarded(node def.Node, ctx def.FSMContext) (def.FSMContext
 }
 
 type childScheduler interface {
-	scheduleChildren(*FSM, *nodeRuntime, def.FSMContext) (def.FSMContext, def.Status)
+	internal.ChildScheduler
 }
 
 func (f *FSM) tickChildren(node def.Node, ctx def.FSMContext) (def.FSMContext, def.Status) {
 	children := node.Children()
 	runtime := f.runtime[node.ID()]
 	if runtime == nil {
-		runtime = &nodeRuntime{started: make([]bool, len(children)), finished: make([]bool, len(children))}
+		runtime = internal.NewNodeRuntime(len(children))
 		f.runtime[node.ID()] = runtime
 	}
 	scheduler, ok := node.(childScheduler)
 	if !ok {
 		return ctx, def.Failure
 	}
-	return scheduler.scheduleChildren(f, runtime, ctx)
-}
-
-func (n *SerialNode) scheduleChildren(f *FSM, runtime *nodeRuntime, ctx def.FSMContext) (def.FSMContext, def.Status) {
-	children := n.Children()
-	if runtime.active >= len(children) {
-		return ctx, def.Success
-	}
-	index := runtime.active
-	ctx = f.startChild(children[index], runtime, index, ctx)
-	ctx, status := f.tickNode(children[index], ctx)
-	if status == def.Running {
-		return ctx, def.Running
-	}
-	ctx = f.finishChild(children[index], runtime, index, ctx)
-	if status == def.Failure {
-		return ctx, def.Failure
-	}
-	runtime.active++
-	if runtime.active == len(children) {
-		return ctx, def.Success
-	}
-	return ctx, def.Running
-}
-
-func (n *SelectorNode) scheduleChildren(f *FSM, runtime *nodeRuntime, ctx def.FSMContext) (def.FSMContext, def.Status) {
-	children := n.Children()
-	if runtime.active >= len(children) {
-		return ctx, def.Failure
-	}
-	index := runtime.active
-	ctx = f.startChild(children[index], runtime, index, ctx)
-	ctx, status := f.tickNode(children[index], ctx)
-	if status == def.Running {
-		return ctx, def.Running
-	}
-	ctx = f.finishChild(children[index], runtime, index, ctx)
-	if status == def.Success {
-		return ctx, def.Success
-	}
-	runtime.active++
-	if runtime.active == len(children) {
-		return ctx, def.Failure
-	}
-	return ctx, def.Running
-}
-
-func (n *ParallelNode) scheduleChildren(f *FSM, runtime *nodeRuntime, ctx def.FSMContext) (def.FSMContext, def.Status) {
-	children := n.Children()
-	if runtime.failed {
-		return ctx, def.Failure
-	}
-	allFinished := true
-	for index, child := range children {
-		if runtime.finished[index] {
-			continue
-		}
-		allFinished = false
-		ctx = f.startChild(child, runtime, index, ctx)
-		var status def.Status
-		ctx, status = f.tickNode(child, ctx)
-		if status == def.Running {
-			continue
-		}
-		ctx = f.finishChild(child, runtime, index, ctx)
-		runtime.finished[index] = true
-		if status == def.Failure {
-			runtime.failed = true
-			return ctx, def.Failure
-		}
-	}
-	if allFinished || allTrue(runtime.finished) {
-		return ctx, def.Success
-	}
-	return ctx, def.Running
+	return scheduler.ScheduleChildren(runtime, f.tickNode, f.startChild, f.finishChild, ctx)
 }
 
 func (f *FSM) startChild(node def.Node, runtime *nodeRuntime, index int, ctx def.FSMContext) def.FSMContext {
-	if !runtime.started[index] {
+	if !runtime.ChildStarted(index) {
 		ctx = f.enterNode(node, ctx)
-		runtime.started[index] = true
+		runtime.SetChildStarted(index, true)
 	}
 	return ctx
 }
 
 func (f *FSM) finishChild(node def.Node, runtime *nodeRuntime, index int, ctx def.FSMContext) def.FSMContext {
-	if runtime.started[index] {
+	if runtime.ChildStarted(index) {
 		ctx = f.exitNode(node, ctx)
-		runtime.started[index] = false
+		runtime.SetChildStarted(index, false)
 	}
 	return ctx
-}
-
-func allTrue(values []bool) bool {
-	for _, value := range values {
-		if !value {
-			return false
-		}
-	}
-	return true
 }
