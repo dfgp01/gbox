@@ -3,7 +3,7 @@ package game
 import (
 	"sort"
 
-	def "gbox/def/game"
+	def "gbox/def/game/ecs"
 )
 
 // BaseSystem 系统基类（公共类）：提供优先级与软开关。

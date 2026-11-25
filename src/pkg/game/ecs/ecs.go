@@ -11,8 +11,9 @@ import (
 	"context"
 	"time"
 
-	def "gbox/def/game"
+	def "gbox/def/game/ecs"
 	"gbox/internal/game/ecs"
+	internal "gbox/internal/game/ecs"
 )
 
 // ---- 工厂：World / 状态机系统 ----
@@ -44,7 +45,7 @@ type StateMachineSystem interface {
 // NewStateMachineSystem 创建驱动指定状态机的系统（实现 StateMachineSystem）。
 // 自带优先级与软开关，可 SetPriority / Enable / Disable 进行调度。
 func NewStateMachineSystem(m *def.StateMachine) StateMachineSystem {
-	return ecs.NewStateMachineSystem(m)
+	return internal.NewStateMachineSystem(m)
 }
 
 // GameStart 开始游戏主循环。
