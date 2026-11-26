@@ -54,7 +54,6 @@ type Guard func(FSMContext) bool
 // Guards evaluates a composed guard and reports the selected branch path.
 type Guards interface {
 	Evaluate(FSMContext) (bool, []int)
-	Children() []Guards
 }
 
 // Transition is an outgoing edge from a node.
