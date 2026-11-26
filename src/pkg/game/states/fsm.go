@@ -10,14 +10,18 @@ import (
 	internal "gbox/internal/game/states"
 )
 
-// Node types are implemented internally; aliases preserve the pkg API.
-type BaseNode = internal.BaseNode
+// Node types are implemented internally; aliases preserve the public API.
 type LeafNode = internal.LeafNode
+type TerminalNode = internal.TerminalNode
 type SerialNode = internal.SerialNode
 type ParallelNode = internal.ParallelNode
 type SelectorNode = internal.SelectorNode
 
 func NewLeafNode(id def.StateID, name string) *LeafNode { return internal.NewLeafNode(id, name) }
+
+func NewTerminalNode(id def.StateID, name string) *TerminalNode {
+	return internal.NewTerminalNode(id, name)
+}
 
 func NewSerialNode(id def.StateID, name string, children ...def.Node) *SerialNode {
 	return internal.NewSerialNode(id, name, children...)
@@ -128,10 +132,8 @@ func NewGraph(root def.Node) (*Graph, error) {
 		if node.Name() == "" {
 			return nil, fmt.Errorf("states: node %d has an empty name", id)
 		}
-		if len(node.Children()) > 0 {
-			if _, ok := node.(childScheduler); !ok {
-				return nil, fmt.Errorf("states: node %q has children but no child scheduler", node.Name())
-			}
+		if err := validateNode(node); err != nil {
+			return nil, err
 		}
 		graph.nodes[id] = node
 
@@ -158,6 +160,32 @@ func NewGraph(root def.Node) (*Graph, error) {
 		}
 	}
 	return graph, nil
+}
+
+func validateNode(node def.Node) error {
+	switch node.Type() {
+	case def.Leaf:
+		if len(node.Children()) != 0 {
+			return fmt.Errorf("states: leaf node %q cannot have children", node.Name())
+		}
+		if node.Guards() == nil || node.DefaultTo() == nil {
+			return fmt.Errorf("states: leaf node %q requires guards and a default target", node.Name())
+		}
+		if len(node.Transitions()) == 0 {
+			return fmt.Errorf("states: leaf node %q requires at least one outgoing transition", node.Name())
+		}
+	case def.Terminal:
+		if len(node.Children()) != 0 || node.DefaultTo() != nil || len(node.Transitions()) != 0 {
+			return fmt.Errorf("states: terminal node %q cannot have children or outgoing transitions", node.Name())
+		}
+	case def.Serial, def.Parallel, def.Selector:
+		if len(node.Children()) == 0 {
+			return fmt.Errorf("states: composite node %q requires at least one child", node.Name())
+		}
+	default:
+		return fmt.Errorf("states: node %q has unknown type %d", node.Name(), node.Type())
+	}
+	return nil
 }
 
 func (g *Graph) Root() def.Node { return g.root }
@@ -199,16 +227,14 @@ type FSM struct {
 	EnterTime float32     // State-machine clock time when Current was entered.
 	Duration  float32     // Time spent in Current.
 
-	graph      *Graph                       // Shared immutable graph definition.
-	ctx        def.FSMContext               // Mutable per-instance callback context.
-	elapsed    float32                      // Accumulated state-machine clock time.
-	entered    bool                         // Whether the current node has received OnEnter.
-	runtime    map[def.StateID]*nodeRuntime // Per-node composite scheduling state.
-	branchPath []int                        // Branch path selected during the current tick.
-	proposals  []transitionProposal         // Transition requests awaiting arbitration this tick.
+	graph      *Graph               // Shared immutable graph definition.
+	ctx        def.FSMContext       // Mutable per-instance callback context.
+	elapsed    float32              // Accumulated state-machine clock time.
+	entered    bool                 // Whether the current node has received OnEnter.
+	runtime    map[def.StateID]any  // Per-node composite scheduling state.
+	branchPath []int                // Branch path selected during the current tick.
+	proposals  []transitionProposal // Transition requests awaiting arbitration this tick.
 }
-
-type nodeRuntime = internal.NodeRuntime
 
 type transitionProposal struct {
 	weight    int        // Priority of the matching explicit edge.
@@ -229,7 +255,7 @@ func NewFSM(graph *Graph, initial def.StateID, data any) (*FSM, error) {
 		Current: initial,
 		graph:   graph,
 		ctx:     def.FSMContext{Data: data},
-		runtime: make(map[def.StateID]*nodeRuntime),
+		runtime: make(map[def.StateID]any),
 	}, nil
 }
 
@@ -252,6 +278,7 @@ func (f *FSM) Tick(dt float32) (def.TickResult, error) {
 	f.elapsed += dt
 	f.ctx.Time = f.elapsed
 	f.ctx.Delta = dt
+	f.ctx.Execution = f
 	f.ctx.Events = nil
 	f.ctx.BranchPath = nil
 	f.branchPath = nil
@@ -272,14 +299,14 @@ func (f *FSM) Tick(dt float32) (def.TickResult, error) {
 	if transitioned {
 		f.ctx = f.exitNode(node, f.ctx)
 		if proposal.action != nil {
-			f.ctx = proposal.action(f.ctx)
+			f.ctx = proposal.action.OnEnter(f.ctx)
 		}
 		f.Previous = f.Current
 		f.Current = proposal.target.ID()
 		f.Duration = 0
 		f.EnterTime = f.elapsed
 		f.ctx.Duration = 0
-		f.runtime = make(map[def.StateID]*nodeRuntime)
+		f.runtime = make(map[def.StateID]any)
 		f.ctx = f.enterNode(proposal.target, f.ctx)
 		f.entered = true
 		f.branchPath = append([]int(nil), proposal.path...)
@@ -299,7 +326,7 @@ func (f *FSM) Tick(dt float32) (def.TickResult, error) {
 	return result, nil
 }
 
-func (f *FSM) collectTransitions(node def.Node, guardsPassed bool, guardPath []int) {
+func (f *FSM) collectTransitions(node def.Node, guardsPassed bool, guardPath []int, ctx def.FSMContext) {
 	if !guardsPassed {
 		if target := node.DefaultTo(); target != nil && target.ID() != node.ID() {
 			f.proposals = append(f.proposals, transitionProposal{
@@ -321,7 +348,7 @@ func (f *FSM) collectTransitions(node def.Node, guardsPassed bool, guardPath []i
 			}
 			return
 		}
-		passed, path := edge.Guards.Evaluate(f.ctx)
+		passed, path := edge.Guards.Evaluate(ctx)
 		if passed {
 			if edge.To.ID() != node.ID() {
 				f.proposals = append(f.proposals, transitionProposal{
@@ -348,18 +375,12 @@ func (f *FSM) selectTransition() (transitionProposal, bool) {
 }
 
 func (f *FSM) enterNode(node def.Node, ctx def.FSMContext) def.FSMContext {
+	ctx.Execution = f
 	return node.OnEnter(ctx)
 }
 
 func (f *FSM) exitNode(node def.Node, ctx def.FSMContext) def.FSMContext {
-	if runtime := f.runtime[node.ID()]; runtime != nil {
-		for index, child := range node.Children() {
-			if runtime.ChildStarted(index) {
-				ctx = f.exitNode(child, ctx)
-				runtime.SetChildStarted(index, false)
-			}
-		}
-	}
+	ctx.Execution = f
 	return node.OnExit(ctx)
 }
 
@@ -374,7 +395,7 @@ func (f *FSM) tickNodeGuarded(node def.Node, ctx def.FSMContext) (def.FSMContext
 		var passed bool
 		passed, guardPath = guards.Evaluate(ctx)
 		if !passed {
-			f.collectTransitions(node, false, guardPath)
+			f.collectTransitions(node, false, guardPath, ctx)
 			f.branchPath = append([]int(nil), guardPath...)
 			return ctx, def.Failure, false
 		}
@@ -383,50 +404,49 @@ func (f *FSM) tickNodeGuarded(node def.Node, ctx def.FSMContext) (def.FSMContext
 	ctx, status = node.OnTick(ctx)
 	for _, addon := range node.Addons() {
 		if addon != nil {
-			ctx = addon(ctx)
+			ctx, _ = addon.OnTick(ctx)
 		}
 	}
-	f.collectTransitions(node, true, guardPath)
+	f.collectTransitions(node, true, guardPath, ctx)
 	if len(guardPath) > 0 {
 		f.branchPath = append([]int(nil), guardPath...)
 	}
 	if len(node.Children()) == 0 {
 		return ctx, status, true
 	}
-	ctx, status = f.tickChildren(node, ctx)
 	return ctx, status, true
 }
 
-type childScheduler interface {
-	internal.ChildScheduler
+// EnterNode implements def.NodeExecution for composite node lifecycles.
+func (f *FSM) EnterNode(node def.Node, ctx def.FSMContext) def.FSMContext {
+	return f.enterNode(node, ctx)
 }
 
-func (f *FSM) tickChildren(node def.Node, ctx def.FSMContext) (def.FSMContext, def.Status) {
-	children := node.Children()
-	runtime := f.runtime[node.ID()]
-	if runtime == nil {
-		runtime = internal.NewNodeRuntime(len(children))
-		f.runtime[node.ID()] = runtime
-	}
-	scheduler, ok := node.(childScheduler)
-	if !ok {
-		return ctx, def.Failure
-	}
-	return scheduler.ScheduleChildren(runtime, f.tickNode, f.startChild, f.finishChild, ctx)
+// TickNode implements def.NodeExecution and evaluates a child without resolving a second transition.
+func (f *FSM) TickNode(node def.Node, ctx def.FSMContext) (def.FSMContext, def.Status) {
+	ctx.Execution = f
+	ctx, status, _ := f.tickNodeGuarded(node, ctx)
+	return ctx, status
 }
 
-func (f *FSM) startChild(node def.Node, runtime *nodeRuntime, index int, ctx def.FSMContext) def.FSMContext {
-	if !runtime.ChildStarted(index) {
-		ctx = f.enterNode(node, ctx)
-		runtime.SetChildStarted(index, true)
-	}
-	return ctx
+// ExitNode implements def.NodeExecution for composite node lifecycles.
+func (f *FSM) ExitNode(node def.Node, ctx def.FSMContext) def.FSMContext {
+	return f.exitNode(node, ctx)
 }
 
-func (f *FSM) finishChild(node def.Node, runtime *nodeRuntime, index int, ctx def.FSMContext) def.FSMContext {
-	if runtime.ChildStarted(index) {
-		ctx = f.exitNode(node, ctx)
-		runtime.SetChildStarted(index, false)
-	}
-	return ctx
+// State returns an opaque runtime value owned by this FSM and node ID.
+func (f *FSM) State(id def.StateID) (any, bool) {
+	state, ok := f.runtime[id]
+	return state, ok
 }
+
+// SetState stores or removes opaque runtime data for a node.
+func (f *FSM) SetState(id def.StateID, state any) {
+	if state == nil {
+		delete(f.runtime, id)
+		return
+	}
+	f.runtime[id] = state
+}
+
+var _ def.NodeExecution = (*FSM)(nil)

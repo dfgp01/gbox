@@ -17,12 +17,22 @@ const (
 // FSMContext contains instance-specific data passed through node callbacks.
 // Callback code should treat Data as immutable and return a changed context.
 type FSMContext struct {
-	Data       any     // Per-instance application data shared with node callbacks.
-	Time       float32 // State-machine clock time in seconds.
-	Delta      float32 // Elapsed time for the current tick in seconds.
-	Duration   float32 // Time spent in the current state in seconds.
-	Events     []any   // Event markers produced during the current tick.
-	BranchPath []int   // Guard branch indexes selected or rejected during evaluation.
+	Data       any           // Per-instance application data shared with node callbacks.
+	Execution  NodeExecution // Per-FSM executor used by hierarchical nodes to run children.
+	Time       float32       // State-machine clock time in seconds.
+	Delta      float32       // Elapsed time for the current tick in seconds.
+	Duration   float32       // Time spent in the current state in seconds.
+	Events     []any         // Event markers produced during the current tick.
+	BranchPath []int         // Guard branch indexes selected or rejected during evaluation.
+}
+
+// NodeExecution runs node lifecycle callbacks and stores per-instance node state.
+type NodeExecution interface {
+	EnterNode(Node, FSMContext) FSMContext
+	TickNode(Node, FSMContext) (FSMContext, Status)
+	ExitNode(Node, FSMContext) FSMContext
+	State(StateID) (any, bool)
+	SetState(StateID, any)
 }
 
 // Mark appends an event marker for the caller to handle after the current tick.
@@ -32,10 +42,10 @@ func (c FSMContext) Mark(event any) FSMContext {
 }
 
 // Action transforms an FSM context. It should not mutate external state.
-type Action struct {
-	OnEnter func(FSMContext) FSMContext
-	OnTick  func(FSMContext) (FSMContext, Status)
-	OnExit  func(FSMContext) FSMContext
+type Action interface {
+	OnEnter(FSMContext) FSMContext
+	OnTick(FSMContext) (FSMContext, Status)
+	OnExit(FSMContext) FSMContext
 }
 
 // Guard checks whether an operation is allowed without changing state.
@@ -60,6 +70,7 @@ type Node interface {
 	ID() StateID
 	Name() string
 	Type() NodeType
+	Addons() []Action
 	OnEnter(FSMContext) FSMContext
 	OnTick(FSMContext) (FSMContext, Status)
 	OnExit(FSMContext) FSMContext

@@ -19,18 +19,16 @@ func Check(node def.Node) error {
 
 	//节点类型检查
 	switch node.Type() {
-	case def.Leaf, def.Terminal:
-		//需要在这里检查终态
-		if node.Type() == def.Terminal {
-			return nil
-		}
-		// 周期检查
+	case def.Leaf:
 		if node.Guards() == nil || node.DefaultTo() == nil {
 			return fmt.Errorf("leaf node %q must have guards and default transition", node.Name())
 		}
-		// 迁移检查
-		if node.Transitions() == nil || len(node.Transitions()) == 0 {
+		if len(node.Transitions()) == 0 {
 			return fmt.Errorf("leaf node %q must have at least one transition", node.Name())
+		}
+	case def.Terminal:
+		if node.DefaultTo() != nil || len(node.Transitions()) != 0 || len(node.Children()) != 0 {
+			return fmt.Errorf("terminal node %q cannot have outgoing transitions or children", node.Name())
 		}
 	case def.Serial, def.Parallel, def.Selector:
 		if len(node.Children()) == 0 {
@@ -43,7 +41,7 @@ func Check(node def.Node) error {
 }
 
 func IsTerminal(node def.Node) bool {
-	return node != nil && node.DefaultTo() == nil
+	return node != nil && node.Type() == def.Terminal
 }
 
 func IsLeaf(node def.Node) bool {
@@ -51,10 +49,10 @@ func IsLeaf(node def.Node) bool {
 }
 
 func IsHierarchical(node def.Node) bool {
-	return node != nil && node.Type() != def.Leaf
+	return node != nil && (node.Type() == def.Serial || node.Type() == def.Parallel || node.Type() == def.Selector)
 }
 
 // 保留这个命名
 func IsComposite(node def.Node) bool {
-	return false
+	return IsHierarchical(node)
 }

@@ -2,155 +2,177 @@ package states
 
 import def "gbox/def/game/states"
 
-// NodeRuntime holds mutable child scheduling data for one FSM instance.
-type NodeRuntime struct {
+// childRuntime stores mutable scheduling data per FSM, never on a shared node.
+type childRuntime struct {
 	active   int
 	started  []bool
 	finished []bool
 	failed   bool
 }
 
-// NewNodeRuntime allocates per-instance scheduling data for a composite node.
-func NewNodeRuntime(childCount int) *NodeRuntime {
-	return &NodeRuntime{
-		started:  make([]bool, childCount),
-		finished: make([]bool, childCount),
-	}
-}
-
-// ChildStarted reports whether a child has entered and not yet exited.
-func (r *NodeRuntime) ChildStarted(index int) bool {
-	return index >= 0 && index < len(r.started) && r.started[index]
-}
-
-// SetChildStarted updates a child's lifecycle state.
-func (r *NodeRuntime) SetChildStarted(index int, started bool) {
-	if index >= 0 && index < len(r.started) {
-		r.started[index] = started
-	}
-}
-
-// ChildTickFunc ticks a scheduled child node.
-type ChildTickFunc func(def.Node, def.FSMContext) (def.FSMContext, def.Status)
-
-// ChildLifecycleFunc invokes a child lifecycle callback and updates the context.
-type ChildLifecycleFunc func(def.Node, *NodeRuntime, int, def.FSMContext) def.FSMContext
-
-// ChildScheduler is implemented by each concrete hierarchical node type.
-type ChildScheduler interface {
-	ScheduleChildren(*NodeRuntime, ChildTickFunc, ChildLifecycleFunc, ChildLifecycleFunc, def.FSMContext) (def.FSMContext, def.Status)
+func newChildRuntime(count int) *childRuntime {
+	return &childRuntime{started: make([]bool, count), finished: make([]bool, count)}
 }
 
 // SerialNode advances to the next child after each successful child.
 type SerialNode struct {
-	LeafNode // Common node structure and default lifecycle behavior.
+	nodeBase
+	children []def.Node
 }
 
 var _ def.Node = (*SerialNode)(nil)
-var _ ChildScheduler = (*SerialNode)(nil)
 
 func NewSerialNode(id def.StateID, name string, children ...def.Node) *SerialNode {
-	return &SerialNode{LeafNode: LeafNode{BaseNode: BaseNode{
-		NodeID: id, NodeName: name, NodeChildren: append([]def.Node(nil), children...),
-	}}}
+	return &SerialNode{
+		nodeBase: nodeBase{NodeID: id, NodeName: name},
+		children: append([]def.Node(nil), children...),
+	}
 }
 
-func (n *SerialNode) NodeType() def.NodeType { return def.Serial }
+func (n *SerialNode) Type() def.NodeType   { return def.Serial }
+func (n *SerialNode) Addons() []def.Action { return nil }
+func (n *SerialNode) Children() []def.Node { return append([]def.Node(nil), n.children...) }
 
-func (n *SerialNode) ScheduleChildren(runtime *NodeRuntime, tick ChildTickFunc, start, finish ChildLifecycleFunc, ctx def.FSMContext) (def.FSMContext, def.Status) {
-	children := n.Children()
-	if runtime.active >= len(children) {
+func (n *SerialNode) OnEnter(ctx def.FSMContext) def.FSMContext {
+	if ctx.Execution != nil {
+		ctx.Execution.SetState(n.ID(), newChildRuntime(len(n.children)))
+	}
+	return ctx
+}
+
+func (n *SerialNode) OnTick(ctx def.FSMContext) (def.FSMContext, def.Status) {
+	runtime, ok := childState(ctx, n.ID())
+	if !ok || ctx.Execution == nil {
+		return ctx, def.Failure
+	}
+	if runtime.active >= len(n.children) {
 		return ctx, def.Success
 	}
 	index := runtime.active
-	ctx = start(children[index], runtime, index, ctx)
-	ctx, status := tick(children[index], ctx)
+	child := n.children[index]
+	ctx = startChild(ctx, runtime, child, index)
+	ctx, status := ctx.Execution.TickNode(child, ctx)
 	if status == def.Running {
 		return ctx, def.Running
 	}
-	ctx = finish(children[index], runtime, index, ctx)
+	ctx = finishChild(ctx, runtime, child, index)
 	if status == def.Failure {
 		return ctx, def.Failure
 	}
 	runtime.active++
-	if runtime.active == len(children) {
+	if runtime.active == len(n.children) {
 		return ctx, def.Success
 	}
 	return ctx, def.Running
+}
+
+func (n *SerialNode) OnExit(ctx def.FSMContext) def.FSMContext {
+	return exitStartedChildren(ctx, n.ID(), n.children)
 }
 
 // SelectorNode advances after failures and succeeds on the first successful child.
 type SelectorNode struct {
-	LeafNode // Common node structure and default lifecycle behavior.
+	nodeBase
+	children []def.Node
 }
 
 var _ def.Node = (*SelectorNode)(nil)
-var _ ChildScheduler = (*SelectorNode)(nil)
 
 func NewSelectorNode(id def.StateID, name string, children ...def.Node) *SelectorNode {
-	return &SelectorNode{LeafNode: LeafNode{BaseNode: BaseNode{
-		NodeID: id, NodeName: name, NodeChildren: append([]def.Node(nil), children...),
-	}}}
+	return &SelectorNode{
+		nodeBase: nodeBase{NodeID: id, NodeName: name},
+		children: append([]def.Node(nil), children...),
+	}
 }
 
-func (n *SelectorNode) NodeType() def.NodeType { return def.Selector }
+func (n *SelectorNode) Type() def.NodeType   { return def.Selector }
+func (n *SelectorNode) Addons() []def.Action { return nil }
+func (n *SelectorNode) Children() []def.Node { return append([]def.Node(nil), n.children...) }
 
-func (n *SelectorNode) ScheduleChildren(runtime *NodeRuntime, tick ChildTickFunc, start, finish ChildLifecycleFunc, ctx def.FSMContext) (def.FSMContext, def.Status) {
-	children := n.Children()
-	if runtime.active >= len(children) {
+func (n *SelectorNode) OnEnter(ctx def.FSMContext) def.FSMContext {
+	if ctx.Execution != nil {
+		ctx.Execution.SetState(n.ID(), newChildRuntime(len(n.children)))
+	}
+	return ctx
+}
+
+func (n *SelectorNode) OnTick(ctx def.FSMContext) (def.FSMContext, def.Status) {
+	runtime, ok := childState(ctx, n.ID())
+	if !ok || ctx.Execution == nil {
+		return ctx, def.Failure
+	}
+	if runtime.active >= len(n.children) {
 		return ctx, def.Failure
 	}
 	index := runtime.active
-	ctx = start(children[index], runtime, index, ctx)
-	ctx, status := tick(children[index], ctx)
+	child := n.children[index]
+	ctx = startChild(ctx, runtime, child, index)
+	ctx, status := ctx.Execution.TickNode(child, ctx)
 	if status == def.Running {
 		return ctx, def.Running
 	}
-	ctx = finish(children[index], runtime, index, ctx)
+	ctx = finishChild(ctx, runtime, child, index)
 	if status == def.Success {
 		return ctx, def.Success
 	}
 	runtime.active++
-	if runtime.active == len(children) {
+	if runtime.active == len(n.children) {
 		return ctx, def.Failure
 	}
 	return ctx, def.Running
 }
 
+func (n *SelectorNode) OnExit(ctx def.FSMContext) def.FSMContext {
+	return exitStartedChildren(ctx, n.ID(), n.children)
+}
+
 // ParallelNode ticks all unfinished children in declaration order.
 type ParallelNode struct {
-	LeafNode // Common node structure and default lifecycle behavior.
+	nodeBase
+	children []def.Node
 }
 
 var _ def.Node = (*ParallelNode)(nil)
-var _ ChildScheduler = (*ParallelNode)(nil)
 
 func NewParallelNode(id def.StateID, name string, children ...def.Node) *ParallelNode {
-	return &ParallelNode{LeafNode: LeafNode{BaseNode: BaseNode{
-		NodeID: id, NodeName: name, NodeChildren: append([]def.Node(nil), children...),
-	}}}
+	return &ParallelNode{
+		nodeBase: nodeBase{NodeID: id, NodeName: name},
+		children: append([]def.Node(nil), children...),
+	}
 }
 
-func (n *ParallelNode) NodeType() def.NodeType { return def.Parallel }
+func (n *ParallelNode) Type() def.NodeType   { return def.Parallel }
+func (n *ParallelNode) Addons() []def.Action { return nil }
+func (n *ParallelNode) Children() []def.Node { return append([]def.Node(nil), n.children...) }
 
-func (n *ParallelNode) ScheduleChildren(runtime *NodeRuntime, tick ChildTickFunc, start, finish ChildLifecycleFunc, ctx def.FSMContext) (def.FSMContext, def.Status) {
-	children := n.Children()
+func (n *ParallelNode) OnEnter(ctx def.FSMContext) def.FSMContext {
+	if ctx.Execution != nil {
+		ctx.Execution.SetState(n.ID(), newChildRuntime(len(n.children)))
+	}
+	return ctx
+}
+
+func (n *ParallelNode) OnTick(ctx def.FSMContext) (def.FSMContext, def.Status) {
+	runtime, ok := childState(ctx, n.ID())
+	if !ok || ctx.Execution == nil {
+		return ctx, def.Failure
+	}
 	if runtime.failed {
 		return ctx, def.Failure
 	}
 	allFinished := true
-	for index, child := range children {
+	for index, child := range n.children {
 		if runtime.finished[index] {
 			continue
 		}
 		allFinished = false
-		ctx = start(child, runtime, index, ctx)
+		ctx = startChild(ctx, runtime, child, index)
 		var status def.Status
-		ctx, status = tick(child, ctx)
+		ctx, status = ctx.Execution.TickNode(child, ctx)
 		if status == def.Running {
 			continue
 		}
-		ctx = finish(child, runtime, index, ctx)
+		ctx = finishChild(ctx, runtime, child, index)
 		runtime.finished[index] = true
 		if status == def.Failure {
 			runtime.failed = true
@@ -161,6 +183,53 @@ func (n *ParallelNode) ScheduleChildren(runtime *NodeRuntime, tick ChildTickFunc
 		return ctx, def.Success
 	}
 	return ctx, def.Running
+}
+
+func (n *ParallelNode) OnExit(ctx def.FSMContext) def.FSMContext {
+	return exitStartedChildren(ctx, n.ID(), n.children)
+}
+
+func childState(ctx def.FSMContext, id def.StateID) (*childRuntime, bool) {
+	if ctx.Execution == nil {
+		return nil, false
+	}
+	value, ok := ctx.Execution.State(id)
+	if !ok {
+		return nil, false
+	}
+	runtime, ok := value.(*childRuntime)
+	return runtime, ok
+}
+
+func startChild(ctx def.FSMContext, runtime *childRuntime, child def.Node, index int) def.FSMContext {
+	if !runtime.started[index] {
+		ctx = ctx.Execution.EnterNode(child, ctx)
+		runtime.started[index] = true
+	}
+	return ctx
+}
+
+func finishChild(ctx def.FSMContext, runtime *childRuntime, child def.Node, index int) def.FSMContext {
+	if runtime.started[index] {
+		ctx = ctx.Execution.ExitNode(child, ctx)
+		runtime.started[index] = false
+	}
+	return ctx
+}
+
+func exitStartedChildren(ctx def.FSMContext, id def.StateID, children []def.Node) def.FSMContext {
+	runtime, ok := childState(ctx, id)
+	if !ok || ctx.Execution == nil {
+		return ctx
+	}
+	for index, child := range children {
+		if runtime.started[index] {
+			ctx = ctx.Execution.ExitNode(child, ctx)
+			runtime.started[index] = false
+		}
+	}
+	ctx.Execution.SetState(id, nil)
+	return ctx
 }
 
 func allTrue(values []bool) bool {
